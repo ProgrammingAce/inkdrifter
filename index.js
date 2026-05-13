@@ -423,6 +423,17 @@ function drawRiver(canvas, centerline, params = {}) {
 // ============================================================
 // HEX GRID RENDERER
 // ============================================================
+function hexStrokeAlpha(fade, cx, cy, canvasW, canvasH) {
+  // Distance from canvas center, normalized to [0, ~0.71]
+  const dx = (cx - canvasW / 2) / (canvasW / 2);
+  const dy = (cy - canvasH / 2) / (canvasH / 2);
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  // Fade: 1.0 at center, drops to fade at edges
+  // Quadratic fade for smooth vignette effect
+  const t = Math.min(dist / 0.85, 1.0);
+  return 1.0 - t * t * (1.0 - fade);
+}
+
 function drawHexGrid(canvas, opts = {}) {
   const rows = opts.rows ?? DEFAULT_ROWS;
   const cols = opts.cols ?? DEFAULT_COLS;
@@ -433,17 +444,30 @@ function drawHexGrid(canvas, opts = {}) {
   const strokeColor = opts.strokeColor ?? '#2a2015';
   const edgeWidth = opts.edgeWidth ?? 28;
   const tickWidth = opts.tickWidth ?? 24;
+  const fadeEdge = opts.fadeEdge ?? 0.35;
 
   const ctx = canvas.getContext('2d');
-  ctx.strokeStyle = strokeColor;
   ctx.lineJoin = 'miter';
   ctx.miterLimit = 10;
+
+  // Parse stroke color into RGB components
+  const hex = strokeColor.replace('#', '');
+  const r = parseInt(hex.slice(0, 2), 16);
+  const g = parseInt(hex.slice(2, 4), 16);
+  const b = parseInt(hex.slice(4, 6), 16);
+
+  const canvasW = canvas.width;
+  const canvasH = canvas.height;
 
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
       const c = hexCenter(row, col, opts);
       const verts = hexVertices(c.x, c.y, drawSize);
+      // Scale hex coords to hi-res canvas space for fade calculation
+      const alpha = hexStrokeAlpha(fadeEdge, c.x * scale, c.y * scale, canvasW, canvasH);
+      const strokeStyle = `rgba(${r},${g},${b},${alpha.toFixed(3)})`;
 
+      ctx.strokeStyle = strokeStyle;
       ctx.lineWidth = edgeWidth;
       for (let i = 0; i < 6; i++) {
         const p1 = verts[i];
@@ -513,9 +537,9 @@ function paintParchment(canvas, opts = {}) {
     ctx.fillRect(x - r, y - r, r * 2, r * 2);
   }
 
-  const vig = ctx.createRadialGradient(W / 2, H / 2, W * 0.3, W / 2, H / 2, W * 0.7);
+  const vig = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.3, W / 2, H / 2, Math.max(W, H) * 0.7);
   vig.addColorStop(0, 'rgba(0, 0, 0, 0)');
-  vig.addColorStop(1, 'rgba(80, 60, 40, 0.15)');
+  vig.addColorStop(1, 'rgba(25, 15, 8, 0.35)');
   ctx.fillStyle = vig;
   ctx.fillRect(0, 0, W, H);
 }
@@ -543,7 +567,9 @@ function renderMap(opts = {}) {
 
   const hi = createCanvas(W * S, H * S);
   const hiCtx = hi.getContext('2d');
-  // hiCanvas starts transparent — exactly what we want for the mask.
+  // Pre-fill with parchment color so alpha-blended strokes threshold correctly.
+  hiCtx.fillStyle = '#e8d5b7';
+  hiCtx.fillRect(0, 0, W * S, H * S);
 
   if (drawGrid) drawHexGrid(hi, { ...gridParams, scale: S });
 
@@ -584,12 +610,15 @@ function renderMap(opts = {}) {
 // ============================================================
 function main() {
   const fs = require('fs');
-  const { canvas, river } = renderMap({ seed: 42 });
-  fs.writeFileSync('/Users/ace/code/draw3/output.png', canvas.toBuffer('image/png'));
+  const seed = 42;
+  const { canvas, river } = renderMap({ seed });
+  const filename = `/Users/ace/code/inkdrifter/output_map_1.png`;
+  fs.writeFileSync(filename, canvas.toBuffer('image/png'));
   if (river && !river.reached) {
-    console.warn(`river did not reach far side after retries (length=${river.length})`);
+    console.warn(`seed=${seed}: river did not reach far side after retries (length=${river.length})`);
   }
-  console.log('Saved output.png');
+  console.log(`Saved ${filename} (seed=${seed})`);
+  console.log('Done — 1 map rendered.');
 }
 
 if (require.main === module) main();
