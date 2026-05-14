@@ -565,6 +565,8 @@ function neighborOf(r, c, dir) {
 function buildCoastlineSegments(water, opts = {}) {
   const rows = opts.rows ?? DEFAULT_ROWS;
   const cols = opts.cols ?? DEFAULT_COLS;
+  const riverPoints = opts.riverPoints ?? null;
+  const riverClipRadius = opts.riverClipRadius ?? 30;
   const segments = [];
   for (const key of water) {
     const [r, c] = key.split(',').map(Number);
@@ -575,6 +577,19 @@ function buildCoastlineSegments(water, opts = {}) {
       const outOfBounds = n.r < 0 || n.r >= rows || n.c < 0 || n.c >= cols;
       if (outOfBounds) continue;          // ocean continues offscreen, no coastline
       if (water.has(`${n.r},${n.c}`)) continue; // water-water: not coastline
+      // Skip coastline segments near the river path so the river flows into the sea
+      if (riverPoints) {
+        const mx = (verts[i].x + verts[(i + 1) % 6].x) / 2;
+        const my = (verts[i].y + verts[(i + 1) % 6].y) / 2;
+        let tooClose = false;
+        for (const rp of riverPoints) {
+          const dx = rp.x - mx, dy = rp.y - my;
+          if (dx * dx + dy * dy < riverClipRadius * riverClipRadius) {
+            tooClose = true; break;
+          }
+        }
+        if (tooClose) continue;
+      }
       segments.push({
         p1: verts[i],
         p2: verts[(i + 1) % 6],
@@ -964,42 +979,53 @@ function renderMap(opts = {}) {
 
   let sel;
   let oceanInfo = null;
+  let riverCl = null;
   if (drawOceanFlag) {
     const oceanRng = createRng((seed * 0x85ebca6b) >>> 0 ^ 0xc2b2ae35);
     const sides = pickSides(oceanRng, sidesOverride);
     sel = selectWaterHexes(oceanRng, sides, oceanParams);
-    drawOcean(hi, sel.water, sides, { ...oceanParams, seed, scale: S });
     oceanInfo = { sides, waterCount: sel.water.size, waterFraction: sel.water.size / (DEFAULT_ROWS * DEFAULT_COLS) };
+  }
+
+  // Generate river first so we can clip the coastline where it meets the river
+  let riverInfo = null;
+  if (drawRiverFlag) {
+    riverCl = hexEdgeCenterline(seed, riverPathOpts);
+    riverInfo = { reached: riverCl.reached, length: riverCl.points.length };
+  }
+
+  // Draw ocean with river points so coastline breaks at river entry/exit
+  if (drawOceanFlag && sel) {
+    drawOcean(hi, sel.water, oceanInfo.sides, {
+      ...oceanParams, seed, scale: S,
+      riverPoints: riverCl ? riverCl.points : null,
+    });
+  } else if (drawOceanFlag) {
+    drawOcean(hi, sel.water, oceanInfo.sides, { ...oceanParams, seed, scale: S });
   }
 
   if (drawGrid) drawHexGrid(hi, { ...gridParams, scale: S });
 
-  let riverInfo = null;
-  if (drawRiverFlag) {
-    const cl = hexEdgeCenterline(seed, riverPathOpts);
-    riverInfo = { reached: cl.reached, length: cl.points.length };
-    if (cl.points.length >= 2) {
-      // Clip river at coastline using canvas clip path — the river has width
-      // so centerline clipping alone isn't enough; banks extend into ocean.
-      if (drawOceanFlag && sel) {
-        hiCtx.save();
-        hiCtx.beginPath();
-        for (let r = 0; r < DEFAULT_ROWS; r++) {
-          for (let c = 0; c < DEFAULT_COLS; c++) {
-            if (!sel.water.has(`${r},${c}`)) {
-              const center = hexCenter(r, c, { rows: DEFAULT_ROWS, cols: DEFAULT_COLS });
-              const verts = hexVertices(center.x, center.y, HEX_SIZE);
-              hiCtx.moveTo(verts[0].x * S, verts[0].y * S);
-              for (let v = 1; v < 6; v++) hiCtx.lineTo(verts[v].x * S, verts[v].y * S);
-            }
+  // Draw river clipped to land hexes
+  if (drawRiverFlag && riverCl && riverCl.points.length >= 2) {
+    if (drawOceanFlag && sel) {
+      hiCtx.save();
+      hiCtx.beginPath();
+      for (let r = 0; r < DEFAULT_ROWS; r++) {
+        for (let c = 0; c < DEFAULT_COLS; c++) {
+          if (!sel.water.has(`${r},${c}`)) {
+            const center = hexCenter(r, c, { rows: DEFAULT_ROWS, cols: DEFAULT_COLS });
+            const verts = hexVertices(center.x, center.y, HEX_SIZE);
+            hiCtx.moveTo(verts[0].x * S, verts[0].y * S);
+            for (let v = 1; v < 6; v++) hiCtx.lineTo(verts[v].x * S, verts[v].y * S);
           }
         }
-        hiCtx.clip();
-        drawRiver(hi, cl.points, { ...riverParams, seed, scale: S });
-        hiCtx.restore();
-      } else {
-        drawRiver(hi, cl.points, { ...riverParams, seed, scale: S });
       }
+      hiCtx.clip();
+      drawRiver(hi, riverCl.points, { ...riverParams, seed, scale: S });
+      hiCtx.restore();
+    } else {
+      drawRiver(hi, riverCl.points, { ...riverParams, seed, scale: S });
     }
   }
 
