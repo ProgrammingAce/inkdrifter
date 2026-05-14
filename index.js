@@ -562,11 +562,34 @@ function neighborOf(r, c, dir) {
   }
 }
 
+// First intersection (smallest t along p1→p2) of segment p1→p2 with any
+// coast-polyline segment. Returns { x, y, t } or null.
+function segIntersectPolylines(p1, p2, polylines) {
+  const x1 = p1.x, y1 = p1.y, x2 = p2.x, y2 = p2.y;
+  let bestT = Infinity, bestX = 0, bestY = 0, found = false;
+  for (const poly of polylines) {
+    for (let i = 1; i < poly.length; i++) {
+      const x3 = poly[i - 1].x, y3 = poly[i - 1].y;
+      const x4 = poly[i].x,     y4 = poly[i].y;
+      const denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+      if (Math.abs(denom) < 1e-9) continue;
+      const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom;
+      const u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / denom;
+      if (t < 0 || t > 1 || u < 0 || u > 1) continue;
+      if (t < bestT) {
+        bestT = t;
+        bestX = x1 + t * (x2 - x1);
+        bestY = y1 + t * (y2 - y1);
+        found = true;
+      }
+    }
+  }
+  return found ? { x: bestX, y: bestY, t: bestT } : null;
+}
+
 function buildCoastlineSegments(water, opts = {}) {
   const rows = opts.rows ?? DEFAULT_ROWS;
   const cols = opts.cols ?? DEFAULT_COLS;
-  const riverPoints = opts.riverPoints ?? null;
-  const riverClipRadius = opts.riverClipRadius ?? 30;
   const segments = [];
   for (const key of water) {
     const [r, c] = key.split(',').map(Number);
@@ -577,19 +600,6 @@ function buildCoastlineSegments(water, opts = {}) {
       const outOfBounds = n.r < 0 || n.r >= rows || n.c < 0 || n.c >= cols;
       if (outOfBounds) continue;          // ocean continues offscreen, no coastline
       if (water.has(`${n.r},${n.c}`)) continue; // water-water: not coastline
-      // Skip coastline segments near the river path so the river flows into the sea
-      if (riverPoints) {
-        const mx = (verts[i].x + verts[(i + 1) % 6].x) / 2;
-        const my = (verts[i].y + verts[(i + 1) % 6].y) / 2;
-        let tooClose = false;
-        for (const rp of riverPoints) {
-          const dx = rp.x - mx, dy = rp.y - my;
-          if (dx * dx + dy * dy < riverClipRadius * riverClipRadius) {
-            tooClose = true; break;
-          }
-        }
-        if (tooClose) continue;
-      }
       segments.push({
         p1: verts[i],
         p2: verts[(i + 1) % 6],
@@ -713,6 +723,11 @@ function buildCoastPolylines(chains, rng, opts = {}) {
 
 function drawOcean(canvas, water, sides, opts = {}) {
   const ctx = canvas.getContext('2d');
+  // Optional separate target for the thin wave lines, rendered at native
+  // resolution to bypass the hi-res threshold pipeline (which kills hairlines).
+  const waveCanvas = opts.waveCanvas ?? canvas;
+  const waveCtx = waveCanvas.getContext('2d');
+  const waveScale = opts.waveScale ?? opts.scale ?? 1;
   const rows = opts.rows ?? DEFAULT_ROWS;
   const cols = opts.cols ?? DEFAULT_COLS;
   const scale = opts.scale ?? 1;
@@ -720,108 +735,219 @@ function drawOcean(canvas, water, sides, opts = {}) {
   const rng = createRng((seed * 0x9E3779B1) >>> 0 ^ 0x517cc1b7);
   const lineColor = opts.lineColor ?? '#2a2015';
   const coastWidth = opts.coastWidth ?? 8.0;
-  const waveOffsets = opts.waveOffsets ?? [9, 18, 28, 40, 54, 70, 88, 108];
-  const waveWidths = opts.waveWidths ?? [1.6, 1.5, 1.4, 1.3, 1.2, 1.1, 1.0, 0.9];
   const W = canvas.width;
   const H = canvas.height;
 
-  const segments = buildCoastlineSegments(water, opts);
-  if (segments.length === 0) return { chains: [], polylines: [] };
-  const chains = stitchSegments(segments);
-  const polylines = buildCoastPolylines(chains, rng, { amp: opts.wiggleAmp ?? 5.5, samples: opts.samples ?? 6 });
+  let chains, polylines;
+  if (opts.prebuiltPolylines) {
+    polylines = opts.prebuiltPolylines;
+    chains = null;
+  } else {
+    const segments = buildCoastlineSegments(water, opts);
+    if (segments.length === 0) return { chains: [], polylines: [] };
+    chains = stitchSegments(segments);
+    polylines = buildCoastPolylines(chains, rng, { amp: opts.wiggleAmp ?? 5.5, samples: opts.samples ?? 6 });
+  }
 
   ctx.strokeStyle = lineColor;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
-  // coastline
+  if (!opts.skipCoast) {
+    drawCoastline(ctx, polylines, opts, { scale, coastWidth, lineColor });
+  }
+
+  // Wave rings (coastline-2.png style): just a handful of tight, scalloped
+  // rings hugging each coast. Each ring is a continuous wavy offset of the
+  // coast polyline. Open ocean past the outermost ring is left blank.
+  if (opts.skipWaves) return { chains, polylines };
+  return drawCoastWaveRings(waveCtx, polylines, water, opts, {
+    waveScale, lineColor,
+    Wmax: W / scale, Hmax: H / scale,
+  });
+}
+
+// Stroke the wavy coast polylines with a per-sample river-mouth clip so
+// the gap at the mouth is sized by `riverClipRadius` (not by the hex-edge
+// length). Each sample within riverClipRadius of any mouth point is
+// skipped, breaking the stroke into multiple runs around the mouth.
+function drawCoastline(ctx, polylines, opts, env) {
+  const { scale, coastWidth, lineColor } = env;
+  const riverPoints = opts.riverPoints ?? null;
+  const coastClipRadius = opts.riverClipRadius ?? 14;
+  const ccr2 = coastClipRadius * coastClipRadius;
+  ctx.strokeStyle = lineColor;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
   ctx.lineWidth = Math.max(1, coastWidth * scale);
   for (const poly of polylines) {
     if (poly.length < 2) continue;
-    ctx.beginPath();
-    ctx.moveTo(poly[0].x * scale, poly[0].y * scale);
-    for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i].x * scale, poly[i].y * scale);
-    ctx.stroke();
+    let drawing = false;
+    for (let i = 0; i < poly.length; i++) {
+      let ok = true;
+      if (riverPoints) {
+        for (let m = 0; m < riverPoints.length; m++) {
+          const dx = riverPoints[m].x - poly[i].x;
+          const dy = riverPoints[m].y - poly[i].y;
+          if (dx * dx + dy * dy < ccr2) { ok = false; break; }
+        }
+      }
+      if (ok) {
+        if (!drawing) {
+          ctx.beginPath();
+          ctx.moveTo(poly[i].x * scale, poly[i].y * scale);
+          drawing = true;
+        } else {
+          ctx.lineTo(poly[i].x * scale, poly[i].y * scale);
+        }
+      } else if (drawing) {
+        ctx.stroke();
+        drawing = false;
+      }
+    }
+    if (drawing) ctx.stroke();
   }
+}
 
-  // Wave lines: dense parallel curves following the coast with mild per-layer wiggle.
-  // Matches coastline-waves.png: many waves, mostly continuous, occasional gaps,
-  // outer layers slightly less detailed and more broken near image edges.
-  const wavePhases = waveOffsets.map(() => rng.uniform() * Math.PI * 2);
-  const Wmax = W / scale, Hmax = H / scale;
+// Draws coastline-hugging wave rings in the style of coastline-2.png:
+//   - 4 tight rings starting close to the coast
+//   - each ring is the coast offset outward + a small sine scallop
+//   - all rings similar weight, slightly thinning outward
+//   - rings stop after the outermost — open ocean stays clear
+function drawCoastWaveRings(ctx, polylines, water, opts, env) {
+  const { waveScale, lineColor, Wmax, Hmax } = env;
+  const seed = opts.seed ?? 0;
+  const rng = createRng((seed * 0x9E3779B1) >>> 0 ^ 0xA1B2C3D4);
 
-  // Pre-smooth coast ONCE so every wave layer offsets the same underlying curve.
-  // Consistent base + per-layer amplitude clamp = layers can't cross each other.
-  const SHARED_SIGMA = 3.5;
-  const sharedSmooth = polylines.map(poly => {
-    if (poly.length < 4) return null;
-    return {
-      sx: gaussianFilter1D(poly.map(p => p.sx), SHARED_SIGMA),
-      sy: gaussianFilter1D(poly.map(p => p.sy), SHARED_SIGMA),
-      nx: gaussianFilter1D(poly.map(p => p.onx), SHARED_SIGMA),
-      ny: gaussianFilter1D(poly.map(p => p.ony), SHARED_SIGMA),
-    };
+  ctx.strokeStyle = lineColor;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  // Tiers — distance from coast, line width, sine scallop, and break-up.
+  // Inner rings hug coast detail tightly. Outer rings break up into dashes.
+  const tiers = opts.waveTiers ?? [
+    { dist: 12, width: 1.7, amp: 2.0, wavelen: 22, breakProb: 0.00, dashMean: 999, gapMean: 0  },
+    { dist: 28, width: 1.4, amp: 2.4, wavelen: 26, breakProb: 0.05, dashMean: 12,  gapMean: 18 },
+  ];
+
+  // River-mouth clip: skip wave samples near any river mouth point so the
+  // rings open up where the river crosses the coast (notch fans outward).
+  const riverMouths = opts.riverPoints ?? null;
+  const riverClipRadius = opts.riverClipRadius ?? 14;
+
+  // Per-tier base. Use the RAW coast points (poly[i].x/y) so rings follow
+  // every coast bump and zigzag closely. Normals come from the lightly
+  // smoothed coast so they don't whip at sharp concave corners. σ for the
+  // normals grows slightly outward for slightly rounder outer rings.
+  const tierBase = tiers.map((_, k) => {
+    const sigmaN = 0.5 + k * 0.4;
+    return polylines.map(poly => {
+      if (poly.length < 4) return null;
+      return {
+        // Position = raw coast (preserves bumps & coves)
+        sx: poly.map(p => p.x),
+        sy: poly.map(p => p.y),
+        // Normals = mildly smoothed so they're stable around tight corners
+        nx: gaussianFilter1D(poly.map(p => p.onx), sigmaN),
+        ny: gaussianFilter1D(poly.map(p => p.ony), sigmaN),
+      };
+    });
   });
 
-  for (let k = 0; k < waveOffsets.length; k++) {
-    const δ = waveOffsets[k];
-    ctx.lineWidth = Math.max(0.5, waveWidths[k] * scale);
-    // Very short arcs distributed densely along the coast.
-    const segMin = 6 + k;
-    const segMax = 14 + k * 2;
-    const gapMin = 3 + k;
-    const gapMax = 10 + k * 3;
-    // Available band = half the smaller of the two neighbor gaps. Wiggle must fit.
-    const gapIn = k === 0 ? δ : (δ - waveOffsets[k - 1]);
-    const gapOut = k === waveOffsets.length - 1 ? gapIn : (waveOffsets[k + 1] - δ);
-    const band = Math.max(1.5, 0.42 * Math.min(gapIn, gapOut));
+  for (let k = 0; k < tiers.length; k++) {
+    const t = tiers[k];
+    ctx.lineWidth = Math.max(0.5, t.width * waveScale);
+    const phaseStart = rng.uniform() * Math.PI * 2;
 
     for (let p = 0; p < polylines.length; p++) {
       const poly = polylines[p];
-      const sm = sharedSmooth[p];
+      const sm = tierBase[k][p];
       if (!sm) continue;
+      const N = poly.length;
 
-      const offset = new Array(poly.length);
-      const valid = new Array(poly.length);
-      // Phase-shift each layer so peaks don't align across layers.
-      const layerPhaseShift = k * 0.9;
-      for (let i = 0; i < poly.length; i++) {
+      // Build the offset polyline at distance t.dist along outward normal.
+      const offX = new Array(N), offY = new Array(N);
+      const tanX = new Array(N), tanY = new Array(N);
+      for (let i = 0; i < N; i++) {
         const nl = Math.max(Math.hypot(sm.nx[i], sm.ny[i]), 1e-9);
-        const nx = sm.nx[i] / nl, ny = sm.ny[i] / nl;
-        // Two-harmonic wave shape, normalized to [-1, 1], then scaled to fit the band.
-        const w = 0.7 * Math.sin(i * 0.55 + wavePhases[k] + layerPhaseShift)
-                + 0.3 * Math.sin(i * 1.1 + wavePhases[k] * 1.7 + layerPhaseShift);
-        const wig = band * w;
-        const ox = sm.sx[i] + nx * (δ + wig);
-        const oy = sm.sy[i] + ny * (δ + wig);
-        offset[i] = { x: ox, y: oy };
-        const onCanvas = ox >= -2 && ox <= Wmax + 2 && oy >= -2 && oy <= Hmax + 2;
-        valid[i] = onCanvas && pointIsOcean(ox, oy, water, opts);
+        const ux = sm.nx[i] / nl, uy = sm.ny[i] / nl;
+        offX[i] = sm.sx[i] + ux * t.dist;
+        offY[i] = sm.sy[i] + uy * t.dist;
+      }
+      for (let i = 0; i < N; i++) {
+        const a = Math.max(0, i - 1), b = Math.min(N - 1, i + 1);
+        const dx = offX[b] - offX[a], dy = offY[b] - offY[a];
+        const tl = Math.max(Math.hypot(dx, dy), 1e-9);
+        tanX[i] = dx / tl; tanY[i] = dy / tl;
       }
 
-      let i = rng.uniformInt(0, Math.max(1, gapMax));
-      while (i < poly.length) {
-        const segLen = segMin + rng.uniformInt(0, Math.max(1, segMax - segMin + 1));
-        const end = Math.min(i + segLen, poly.length);
-        // Tiny trim — keep arcs mostly intact.
-        const trim = rng.uniformInt(0, 3);
-        const a = Math.min(end - 1, i + trim);
-        const b = Math.max(a, end - 1 - trim);
-        let drawing = false;
-        ctx.beginPath();
-        for (let j = a; j <= b; j++) {
-          if (!valid[j]) { drawing = false; continue; }
-          const op = offset[j];
-          if (!drawing) { ctx.moveTo(op.x * scale, op.y * scale); drawing = true; }
-          else ctx.lineTo(op.x * scale, op.y * scale);
+      // Compute the wavy-offset point + ocean validity per sample.
+      // Mouth clip fans outward with tier distance so the notch widens
+      // for the further-out rings (matches how the river flows out into
+      // a delta-shaped opening).
+      const mouthClip = riverClipRadius + t.dist * 0.7;
+      const mouthClip2 = mouthClip * mouthClip;
+      const wx = new Array(N), wy = new Array(N), valid = new Array(N);
+      let arcLen = 0;
+      for (let i = 0; i < N; i++) {
+        if (i > 0) arcLen += Math.hypot(offX[i] - offX[i - 1], offY[i] - offY[i - 1]);
+        const perpX = -tanY[i], perpY = tanX[i];
+        const phase = phaseStart + (arcLen / t.wavelen) * Math.PI * 2;
+        const wig = t.amp * Math.sin(phase);
+        wx[i] = offX[i] + perpX * wig;
+        wy[i] = offY[i] + perpY * wig;
+        const onCanvas = wx[i] >= -4 && wx[i] <= Wmax + 4 && wy[i] >= -4 && wy[i] <= Hmax + 4;
+        let ok = onCanvas && pointIsOcean(wx[i], wy[i], water, opts);
+        if (ok && riverMouths) {
+          for (let m = 0; m < riverMouths.length; m++) {
+            const dxm = riverMouths[m].x - wx[i];
+            const dym = riverMouths[m].y - wy[i];
+            if (dxm * dxm + dym * dym < mouthClip2) { ok = false; break; }
+          }
         }
-        ctx.stroke();
-        const gap = gapMin + rng.uniformInt(0, Math.max(1, gapMax - gapMin + 1));
-        i = end + gap;
+        valid[i] = ok;
+      }
+
+      // Stroke each ocean run. Inner tiers stroke continuously; outer tiers
+      // dash up with random gaps so rings break apart further from coast.
+      let i = 0;
+      while (i < N) {
+        while (i < N && !valid[i]) i++;
+        let j = i;
+        while (j < N && valid[j]) j++;
+        const runStart = i, runEnd = j;
+        if (runEnd - runStart >= 2) {
+          if (t.breakProb === 0) {
+            ctx.beginPath();
+            ctx.moveTo(wx[runStart] * waveScale, wy[runStart] * waveScale);
+            for (let q = runStart + 1; q < runEnd; q++) {
+              ctx.lineTo(wx[q] * waveScale, wy[q] * waveScale);
+            }
+            ctx.stroke();
+          } else {
+            let cur = runStart;
+            while (cur < runEnd) {
+              const dash = Math.max(2, t.dashMean + rng.uniformInt(-Math.round(t.dashMean * 0.4), Math.round(t.dashMean * 0.4) + 1));
+              const end = Math.min(cur + dash, runEnd);
+              if (rng.uniform() >= t.breakProb * 0.5 && end - cur >= 2) {
+                ctx.beginPath();
+                ctx.moveTo(wx[cur] * waveScale, wy[cur] * waveScale);
+                for (let q = cur + 1; q < end; q++) {
+                  ctx.lineTo(wx[q] * waveScale, wy[q] * waveScale);
+                }
+                ctx.stroke();
+              }
+              const gap = Math.max(1, t.gapMean + rng.uniformInt(-Math.round(t.gapMean * 0.6), Math.round(t.gapMean * 0.6) + 1));
+              cur = end + gap;
+            }
+          }
+        }
+        i = runEnd + 1;
       }
     }
   }
-  return { chains, polylines };
+
+  return { chains: null, polylines };
 }
 
 // ============================================================
@@ -849,6 +975,14 @@ function drawHexGrid(canvas, opts = {}) {
   const edgeWidth = opts.edgeWidth ?? 28;
   const tickWidth = opts.tickWidth ?? 24;
   const fadeEdge = opts.fadeEdge ?? 0.35;
+  // Ocean dimming. Hex grid for water hexes is rendered on a separate
+  // (non-thresholded) canvas at native res so alpha actually shows up.
+  // `oceanAlpha` is the multiplier (0..1) applied to ocean-hex strokes.
+  // If `oceanAlpha == 0`, water hexes aren't drawn at all.
+  const water = opts.water ?? null;
+  const oceanAlpha = opts.oceanAlpha ?? 1.0;
+  const oceanCanvas = opts.oceanCanvas ?? null;
+  const oceanScale = opts.oceanScale ?? scale;
 
   const ctx = canvas.getContext('2d');
   ctx.lineJoin = 'miter';
@@ -860,6 +994,13 @@ function drawHexGrid(canvas, opts = {}) {
   const g = parseInt(hex.slice(2, 4), 16);
   const b = parseInt(hex.slice(4, 6), 16);
 
+  // Optional secondary target (e.g. parchment canvas) for ocean hexes.
+  const oceanCtx = oceanCanvas ? oceanCanvas.getContext('2d') : null;
+  if (oceanCtx) {
+    oceanCtx.lineJoin = 'miter';
+    oceanCtx.miterLimit = 10;
+  }
+
   const canvasW = canvas.width;
   const canvasH = canvas.height;
 
@@ -867,12 +1008,24 @@ function drawHexGrid(canvas, opts = {}) {
     for (let col = 0; col < cols; col++) {
       const c = hexCenter(row, col, opts);
       const verts = hexVertices(c.x, c.y, drawSize);
-      // Scale hex coords to hi-res canvas space for fade calculation
-      const alpha = hexStrokeAlpha(fadeEdge, c.x * scale, c.y * scale, canvasW, canvasH);
+      const isWater = water ? water.has(`${row},${col}`) : false;
+      // Render water hexes to the ocean canvas at native res with dimmed
+      // alpha. Skip entirely when oceanAlpha is 0.
+      if (isWater) {
+        if (!oceanCtx || oceanAlpha <= 0) continue;
+      }
+      // Vignette fade is computed in the same coordinate space as the
+      // target canvas it's drawn to.
+      const targetCtx = isWater ? oceanCtx : ctx;
+      const targetScale = isWater ? oceanScale : scale;
+      const targetW = isWater ? oceanCanvas.width : canvasW;
+      const targetH = isWater ? oceanCanvas.height : canvasH;
+      const fadeA = hexStrokeAlpha(fadeEdge, c.x * targetScale, c.y * targetScale, targetW, targetH);
+      const alpha = isWater ? fadeA * oceanAlpha : fadeA;
       const strokeStyle = `rgba(${r},${g},${b},${alpha.toFixed(3)})`;
 
-      ctx.strokeStyle = strokeStyle;
-      ctx.lineWidth = edgeWidth;
+      targetCtx.strokeStyle = strokeStyle;
+      targetCtx.lineWidth = edgeWidth * (targetScale / scale);
       for (let i = 0; i < 6; i++) {
         const p1 = verts[i];
         const p2 = verts[(i + 1) % 6];
@@ -882,13 +1035,13 @@ function drawHexGrid(canvas, opts = {}) {
         const ux = dx / len;
         const uy = dy / len;
         const gap = HEX_SIZE * edgeGapRatio;
-        ctx.beginPath();
-        ctx.moveTo((p1.x + ux * gap) * scale, (p1.y + uy * gap) * scale);
-        ctx.lineTo((p2.x - ux * gap) * scale, (p2.y - uy * gap) * scale);
-        ctx.stroke();
+        targetCtx.beginPath();
+        targetCtx.moveTo((p1.x + ux * gap) * targetScale, (p1.y + uy * gap) * targetScale);
+        targetCtx.lineTo((p2.x - ux * gap) * targetScale, (p2.y - uy * gap) * targetScale);
+        targetCtx.stroke();
       }
 
-      ctx.lineWidth = tickWidth;
+      targetCtx.lineWidth = tickWidth * (targetScale / scale);
       for (let i = 0; i < 6; i++) {
         const p = verts[i];
         const dx = p.x - c.x;
@@ -896,10 +1049,10 @@ function drawHexGrid(canvas, opts = {}) {
         const len = Math.hypot(dx, dy);
         const ux = dx / len;
         const uy = dy / len;
-        ctx.beginPath();
-        ctx.moveTo(p.x * scale, p.y * scale);
-        ctx.lineTo((p.x + ux * tickLen) * scale, (p.y + uy * tickLen) * scale);
-        ctx.stroke();
+        targetCtx.beginPath();
+        targetCtx.moveTo(p.x * targetScale, p.y * targetScale);
+        targetCtx.lineTo((p.x + ux * tickLen) * targetScale, (p.y + uy * tickLen) * targetScale);
+        targetCtx.stroke();
       }
     }
   }
@@ -968,6 +1121,8 @@ function renderMap(opts = {}) {
   const riverPathOpts = opts.riverPathOpts ?? {};
   const oceanParams = opts.oceanParams ?? {};
   const sidesOverride = opts.sides;
+  // Hex grid dimming for ocean tiles. 0 = no grid in ocean, 1 = same as land.
+  const oceanGridOpacity = opts.oceanGridOpacity ?? 0.25;
 
   const out = createCanvas(W, H);
   paintParchment(out, { seed });
@@ -994,17 +1149,110 @@ function renderMap(opts = {}) {
     riverInfo = { reached: riverCl.reached, length: riverCl.points.length };
   }
 
-  // Draw ocean with river points so coastline breaks at river entry/exit
+  // Pre-build the coast polylines so river trimming and the ocean renderer
+  // share the exact same wavy coast geometry.
+  let coastPolylines = null;
+  if (drawOceanFlag && sel) {
+    const segs = buildCoastlineSegments(sel.water, oceanParams);
+    if (segs.length > 0) {
+      const chs = stitchSegments(segs);
+      const polyRng = createRng((seed * 0x9E3779B1) >>> 0 ^ 0x517cc1b7);
+      coastPolylines = buildCoastPolylines(chs, polyRng, {
+        amp: oceanParams.wiggleAmp ?? 5.5,
+        samples: oceanParams.samples ?? 6,
+      });
+    }
+  }
+
+  // Trim the river to its single longest contiguous on-land run, and pull
+  // out the actual mouth crossing points. Without this, a river that dips
+  // out into ocean and back can render as two disconnected land chunks
+  // (a "loop back into land"), and the coast clipping cuts the wrong place.
+  let mouthPoints = null;
+  if (drawOceanFlag && sel && riverCl && riverCl.points.length > 0) {
+    const isOceanXY = (x, y) => {
+      const h = hexAtPoint(x, y, oceanParams);
+      if (h === null) return true;
+      return sel.water.has(`${h.r},${h.c}`);
+    };
+    const pts = riverCl.points;
+    // Find longest contiguous land run.
+    let bestStart = -1, bestEnd = -1, bestLen = 0;
+    let curStart = -1;
+    for (let i = 0; i < pts.length; i++) {
+      const land = !isOceanXY(pts[i].x, pts[i].y);
+      if (land) {
+        if (curStart === -1) curStart = i;
+        const len = i - curStart + 1;
+        if (len > bestLen) { bestLen = len; bestStart = curStart; bestEnd = i; }
+      } else {
+        curStart = -1;
+      }
+    }
+    if (bestStart >= 0) {
+      // Include one ocean point at each end (if any) so the river reaches the coast.
+      const startIdx = Math.max(0, bestStart - 1);
+      const endIdx = Math.min(pts.length - 1, bestEnd + 1);
+      const trimmed = pts.slice(startIdx, endIdx + 1);
+      riverCl = { ...riverCl, points: trimmed };
+      // Mouth clip points: river points near each crossing — but only those
+      // that are actually within `nearCoast` of the coast polyline, so inland
+      // points (which happen to pass near other coast sections) don't cause
+      // stray gaps far from the river mouth.
+      const bandRadius = 5;
+      const nearCoast = 22;
+      const near2 = nearCoast * nearCoast;
+      const isNearCoast = (p) => {
+        if (!coastPolylines) return true;
+        for (const poly of coastPolylines) {
+          for (let j = 0; j < poly.length; j++) {
+            const dx = poly[j].x - p.x, dy = poly[j].y - p.y;
+            if (dx * dx + dy * dy < near2) return true;
+          }
+        }
+        return false;
+      };
+      mouthPoints = [];
+      const addBand = (centerIdx) => {
+        const lo = Math.max(0, centerIdx - bandRadius);
+        const hi = Math.min(pts.length - 1, centerIdx + bandRadius);
+        for (let i = lo; i <= hi; i++) {
+          if (isNearCoast(pts[i])) mouthPoints.push({ x: pts[i].x, y: pts[i].y });
+        }
+      };
+      if (startIdx < bestStart) addBand(bestStart);
+      if (endIdx > bestEnd) addBand(bestEnd);
+    } else {
+      riverCl = { ...riverCl, points: [] };
+      mouthPoints = null;
+    }
+  }
+
+  // Draw ocean (coast + waves) — coast and waves both rendered now;
+  // river is drawn after and clipped to land hex polygons.
   if (drawOceanFlag && sel) {
     drawOcean(hi, sel.water, oceanInfo.sides, {
       ...oceanParams, seed, scale: S,
-      riverPoints: riverCl ? riverCl.points : null,
+      waveCanvas: out, waveScale: 1,
+      riverPoints: mouthPoints,
+      prebuiltPolylines: coastPolylines,
     });
   } else if (drawOceanFlag) {
-    drawOcean(hi, sel.water, oceanInfo.sides, { ...oceanParams, seed, scale: S });
+    drawOcean(hi, sel.water, oceanInfo.sides, {
+      ...oceanParams, seed, scale: S,
+      waveCanvas: out, waveScale: 1,
+    });
   }
 
-  if (drawGrid) drawHexGrid(hi, { ...gridParams, scale: S });
+  if (drawGrid) {
+    drawHexGrid(hi, {
+      ...gridParams, scale: S,
+      water: sel ? sel.water : null,
+      oceanAlpha: oceanGridOpacity,
+      oceanCanvas: out,
+      oceanScale: 1,
+    });
+  }
 
   // Draw river clipped to land hexes
   if (drawRiverFlag && riverCl && riverCl.points.length >= 2) {
