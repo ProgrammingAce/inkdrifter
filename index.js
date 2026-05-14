@@ -962,11 +962,12 @@ function renderMap(opts = {}) {
   hiCtx.fillStyle = '#e8d5b7';
   hiCtx.fillRect(0, 0, W * S, H * S);
 
+  let sel;
   let oceanInfo = null;
   if (drawOceanFlag) {
     const oceanRng = createRng((seed * 0x85ebca6b) >>> 0 ^ 0xc2b2ae35);
     const sides = pickSides(oceanRng, sidesOverride);
-    const sel = selectWaterHexes(oceanRng, sides, oceanParams);
+    sel = selectWaterHexes(oceanRng, sides, oceanParams);
     drawOcean(hi, sel.water, sides, { ...oceanParams, seed, scale: S });
     oceanInfo = { sides, waterCount: sel.water.size, waterFraction: sel.water.size / (DEFAULT_ROWS * DEFAULT_COLS) };
   }
@@ -978,7 +979,27 @@ function renderMap(opts = {}) {
     const cl = hexEdgeCenterline(seed, riverPathOpts);
     riverInfo = { reached: cl.reached, length: cl.points.length };
     if (cl.points.length >= 2) {
-      drawRiver(hi, cl.points, { ...riverParams, seed, scale: S });
+      // Clip river at coastline using canvas clip path — the river has width
+      // so centerline clipping alone isn't enough; banks extend into ocean.
+      if (drawOceanFlag && sel) {
+        hiCtx.save();
+        hiCtx.beginPath();
+        for (let r = 0; r < DEFAULT_ROWS; r++) {
+          for (let c = 0; c < DEFAULT_COLS; c++) {
+            if (!sel.water.has(`${r},${c}`)) {
+              const center = hexCenter(r, c, { rows: DEFAULT_ROWS, cols: DEFAULT_COLS });
+              const verts = hexVertices(center.x, center.y, HEX_SIZE);
+              hiCtx.moveTo(verts[0].x * S, verts[0].y * S);
+              for (let v = 1; v < 6; v++) hiCtx.lineTo(verts[v].x * S, verts[v].y * S);
+            }
+          }
+        }
+        hiCtx.clip();
+        drawRiver(hi, cl.points, { ...riverParams, seed, scale: S });
+        hiCtx.restore();
+      } else {
+        drawRiver(hi, cl.points, { ...riverParams, seed, scale: S });
+      }
     }
   }
 
