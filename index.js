@@ -285,7 +285,11 @@ function secondDiff(arr) {
   return out;
 }
 
-function drawRiver(canvas, centerline, params = {}) {
+// Build river bank geometry deterministically from the centerline + params.
+// The rng is consumed in a fixed order (widthMod, thkJitU, thkJitL, blotU,
+// blotL) so callers that pass the same seed get identical banks. The caller
+// owns the rng so it can be reused for downstream draws (e.g. ripple).
+function computeRiverGeometry(centerline, params, rng) {
   const {
     riverWidth = 20,
     bankThickness = 8,
@@ -296,46 +300,27 @@ function drawRiver(canvas, centerline, params = {}) {
     blotWidth = 3.5,
     widthJitterAmp = 14,
     widthJitterSmooth = 25,
-    rippleOffsetFrac = 0.15,
-    rippleJitterAmp = 0.8,
-    rippleJitterSmooth = 12,
-    rippleThickness = 1.5,
-    bankColor = [20, 16, 12],
-    waveColor = [135, 122, 100],
     smoothSigma = 3.0,
-    seed = 0,
-    scale = 1,
   } = params;
-
-  if (centerline.length < 2) return;
-
-  const rng = createRng(seed);
-
-  // Steps 1-2: resample + pre-smooth
+  if (centerline.length < 2) return null;
   let pts = resampleByArcLength(centerline, 1.0);
   const M = pts.length;
-  if (M < 2) return;
+  if (M < 2) return null;
   const smX = gaussianFilter1D(pts.map(p => p.x), smoothSigma);
   const smY = gaussianFilter1D(pts.map(p => p.y), smoothSigma);
   pts = pts.map((_, i) => ({ x: smX[i], y: smY[i] }));
-
-  // Step 3: tangents + left-hand normals
   const tx = centralDiff(pts.map(p => p.x));
   const ty = centralDiff(pts.map(p => p.y));
-  const nx = new Array(M);
-  const ny = new Array(M);
+  const nx = new Array(M), ny = new Array(M);
   for (let i = 0; i < M; i++) {
     const len = Math.max(Math.hypot(tx[i], ty[i]), 1e-12);
     tx[i] /= len; ty[i] /= len;
     nx[i] = -ty[i]; ny[i] = tx[i];
   }
-
-  // Step 4: half-width + curvature clamp
   const halfW = riverWidth / 2;
   const widthMod = jitter(M, widthJitterAmp, widthJitterSmooth, rng);
   const halfW_eff = new Array(M);
   for (let i = 0; i < M; i++) halfW_eff[i] = Math.max(3.0, halfW + widthMod[i]);
-
   const d2x = secondDiff(pts.map(p => p.x));
   const d2y = secondDiff(pts.map(p => p.y));
   const kappa = new Array(M);
@@ -345,16 +330,12 @@ function drawRiver(canvas, centerline, params = {}) {
     const radius = 1.0 / Math.max(kappaSmooth[i], 1e-4);
     halfW_eff[i] = Math.min(halfW_eff[i], 0.85 * radius);
   }
-
-  // Step 5: inner banks
   const upperInner = new Array(M);
   const lowerInner = new Array(M);
   for (let i = 0; i < M; i++) {
     upperInner[i] = { x: pts[i].x + nx[i] * halfW_eff[i], y: pts[i].y + ny[i] * halfW_eff[i] };
     lowerInner[i] = { x: pts[i].x - nx[i] * halfW_eff[i], y: pts[i].y - ny[i] * halfW_eff[i] };
   }
-
-  // Step 6: outward thickness — single smoothed jitter array per bank
   const thkJitU = jitter(M, bankThicknessJitter, bankThicknessSmooth, rng);
   const thkJitL = jitter(M, bankThicknessJitter, bankThicknessSmooth, rng);
   const blotU = blotSignal(M, blotRate, blotAmp, blotWidth, rng);
@@ -365,14 +346,55 @@ function drawRiver(canvas, centerline, params = {}) {
     thk_u[i] = Math.max(1.0, bankThickness + thkJitU[i] + blotU[i]);
     thk_l[i] = Math.max(1.0, bankThickness + thkJitL[i] + blotL[i]);
   }
-
-  // Step 7: outer banks
   const upperOuter = new Array(M);
   const lowerOuter = new Array(M);
   for (let i = 0; i < M; i++) {
     upperOuter[i] = { x: upperInner[i].x + nx[i] * thk_u[i], y: upperInner[i].y + ny[i] * thk_u[i] };
     lowerOuter[i] = { x: lowerInner[i].x - nx[i] * thk_l[i], y: lowerInner[i].y - ny[i] * thk_l[i] };
   }
+  return { pts, M, nx, ny, halfW, halfW_eff, widthMod, upperInner, lowerInner, upperOuter, lowerOuter };
+}
+
+// Closed polygon (upper bank forward, lower bank reversed) suitable for
+// point-in-polygon clipping against the coastline at river mouths.
+function riverBankPolygon(geom) {
+  if (!geom) return null;
+  const poly = new Array(geom.M * 2);
+  for (let i = 0; i < geom.M; i++) poly[i] = geom.upperOuter[i];
+  for (let i = 0; i < geom.M; i++) poly[geom.M + i] = geom.lowerOuter[geom.M - 1 - i];
+  return poly;
+}
+
+function pointInPolygon(x, y, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i].x, yi = poly[i].y;
+    const xj = poly[j].x, yj = poly[j].y;
+    if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function drawRiver(canvas, centerline, params = {}) {
+  const {
+    rippleOffsetFrac = 0.15,
+    rippleJitterAmp = 0.8,
+    rippleJitterSmooth = 12,
+    rippleThickness = 1.5,
+    bankColor = [20, 16, 12],
+    waveColor = [135, 122, 100],
+    seed = 0,
+    scale = 1,
+  } = params;
+
+  if (centerline.length < 2) return;
+
+  const rng = createRng(seed);
+  const geom = computeRiverGeometry(centerline, params, rng);
+  if (!geom) return;
+  const { pts, M, nx, ny, halfW, halfW_eff, widthMod, upperInner, lowerInner, upperOuter, lowerOuter } = geom;
 
   // Step 8: ripple line
   const rippleJit = jitter(M, rippleJitterAmp, rippleJitterSmooth, rng);
@@ -767,12 +789,16 @@ function drawOcean(canvas, water, sides, opts = {}) {
   });
 }
 
-// Stroke the wavy coast polylines with a per-sample river-mouth clip so
-// the gap at the mouth is sized by `riverClipRadius` (not by the hex-edge
-// length). Each sample within riverClipRadius of any mouth point is
-// skipped, breaking the stroke into multiple runs around the mouth.
+// Stroke the wavy coast polylines, opening a gap at each river mouth so the
+// river banks merge into the coastline. Clipping is geometric: a coast
+// sample is dropped iff it lies inside the river's bank polygon (the strip
+// bounded by the outer-upper and outer-lower bank polylines). The gap is
+// therefore sized exactly by where the banks cross the coast.
+// Falls back to the legacy radius-around-mouth-points clip when no polygon
+// is supplied.
 function drawCoastline(ctx, polylines, opts, env) {
   const { scale, coastWidth, lineColor } = env;
+  const bankPoly = opts.riverBankPolygon ?? null;
   const riverPoints = opts.riverPoints ?? null;
   const coastClipRadius = opts.riverClipRadius ?? 14;
   const ccr2 = coastClipRadius * coastClipRadius;
@@ -785,7 +811,9 @@ function drawCoastline(ctx, polylines, opts, env) {
     let drawing = false;
     for (let i = 0; i < poly.length; i++) {
       let ok = true;
-      if (riverPoints) {
+      if (bankPoly) {
+        if (pointInPolygon(poly[i].x, poly[i].y, bankPoly)) ok = false;
+      } else if (riverPoints) {
         for (let m = 0; m < riverPoints.length; m++) {
           const dx = riverPoints[m].x - poly[i].x;
           const dy = riverPoints[m].y - poly[i].y;
@@ -1193,7 +1221,25 @@ function renderMap(opts = {}) {
       // Include one ocean point at each end (if any) so the river reaches the coast.
       const startIdx = Math.max(0, bestStart - 1);
       const endIdx = Math.min(pts.length - 1, bestEnd + 1);
-      const trimmed = pts.slice(startIdx, endIdx + 1);
+      let trimmed = pts.slice(startIdx, endIdx + 1);
+      // Extrapolate each ocean-side end along its tangent so the bank
+      // polygon overshoots the wavy coast. The river-clip path then cuts
+      // the bank exactly at the visible coastline (no thin gap between
+      // bank cap and coast where the wiggle pushes farther into ocean
+      // than one hex-edge offset).
+      const OCEAN_OVERSHOOT = 24;
+      if (startIdx < bestStart && trimmed.length >= 2) {
+        const a = trimmed[0], b = trimmed[1];
+        const dx = a.x - b.x, dy = a.y - b.y;
+        const L = Math.max(Math.hypot(dx, dy), 1e-6);
+        trimmed.unshift({ x: a.x + dx / L * OCEAN_OVERSHOOT, y: a.y + dy / L * OCEAN_OVERSHOOT });
+      }
+      if (endIdx > bestEnd && trimmed.length >= 2) {
+        const a = trimmed[trimmed.length - 1], b = trimmed[trimmed.length - 2];
+        const dx = a.x - b.x, dy = a.y - b.y;
+        const L = Math.max(Math.hypot(dx, dy), 1e-6);
+        trimmed.push({ x: a.x + dx / L * OCEAN_OVERSHOOT, y: a.y + dy / L * OCEAN_OVERSHOOT });
+      }
       riverCl = { ...riverCl, points: trimmed };
       // Mouth clip points: river points near each crossing — but only those
       // that are actually within `nearCoast` of the coast polyline, so inland
@@ -1228,6 +1274,19 @@ function renderMap(opts = {}) {
     }
   }
 
+  // Build the river bank polygon (outer-upper bank → reversed outer-lower
+  // bank) so the coast renderer can clip the coastline exactly where the
+  // banks cross it — making the banks merge into the coastline at the mouth.
+  let bankPolygon = null;
+  if (drawOceanFlag && sel && riverCl && riverCl.points.length >= 2) {
+    const geom = computeRiverGeometry(
+      riverCl.points,
+      { ...riverParams },
+      createRng(seed),
+    );
+    bankPolygon = riverBankPolygon(geom);
+  }
+
   // Draw ocean (coast + waves) — coast and waves both rendered now;
   // river is drawn after and clipped to land hex polygons.
   if (drawOceanFlag && sel) {
@@ -1235,6 +1294,7 @@ function renderMap(opts = {}) {
       ...oceanParams, seed, scale: S,
       waveCanvas: out, waveScale: 1,
       riverPoints: mouthPoints,
+      riverBankPolygon: bankPolygon,
       prebuiltPolylines: coastPolylines,
     });
   } else if (drawOceanFlag) {
@@ -1266,10 +1326,31 @@ function renderMap(opts = {}) {
             const verts = hexVertices(center.x, center.y, HEX_SIZE);
             hiCtx.moveTo(verts[0].x * S, verts[0].y * S);
             for (let v = 1; v < 6; v++) hiCtx.lineTo(verts[v].x * S, verts[v].y * S);
+            hiCtx.closePath();
           }
         }
       }
-      hiCtx.clip();
+      // Adjust the straight-hex-edge clip to follow the wavy coast.
+      // Each polyline segment between two hex-vertex anchors (every
+      // `samples` polyline points) plus the straight line back forms a
+      // closed wiggle region. With evenodd fill, these XOR against the
+      // hex polygons: wiggle-into-ocean is added (count 0→1) and
+      // wiggle-into-land is subtracted (count 1→2). The result is a
+      // clip whose boundary matches the visible coastline exactly, so
+      // river banks no longer protrude past the wavy coast.
+      if (coastPolylines) {
+        const samples = (oceanParams.samples ?? 6);
+        for (const poly of coastPolylines) {
+          for (let i = 0; i + samples < poly.length; i += samples) {
+            hiCtx.moveTo(poly[i].x * S, poly[i].y * S);
+            for (let j = i + 1; j <= i + samples; j++) {
+              hiCtx.lineTo(poly[j].x * S, poly[j].y * S);
+            }
+            hiCtx.closePath();
+          }
+        }
+      }
+      hiCtx.clip('evenodd');
       drawRiver(hi, riverCl.points, { ...riverParams, seed, scale: S });
       hiCtx.restore();
     } else {
@@ -1305,7 +1386,7 @@ function renderMap(opts = {}) {
 // ============================================================
 function main() {
   const fs = require('fs');
-  const seeds = [42, 7, 101, 2024, 9, 1337];
+  const seeds = [42, 7, 1337];
   for (const seed of seeds) {
     const { canvas, ocean } = renderMap({ seed });
     const filename = `/Users/ace/code/inkdrifter/output_ocean_${seed}.png`;
