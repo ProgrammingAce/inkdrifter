@@ -61,3 +61,22 @@ export function neighborSet(row, col, rows, cols) {
   for (const [r, c] of neighbors(row, col, rows, cols)) s.add(`${r},${c}`);
   return s;
 }
+
+export function neighborsOfSet(keys, rows, cols) {
+  const neighbors = new Set();
+  for (const key of keys) {
+    const [r, c] = key.split(',').map(Number);
+    const candidates = r % 2 === 0
+      ? [[r - 1, c - 1], [r - 1, c], [r, c - 1], [r, c + 1], [r + 1, c - 1], [r + 1, c]]
+      : [[r - 1, c], [r - 1, c + 1], [r, c - 1], [r, c + 1], [r + 1, c], [r + 1, c + 1]];
+    for (const [nr, nc] of candidates) {
+      if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+        const nkey = `${nr},${nc}`;
+        if (!keys.has(nkey)) {
+          neighbors.add(nkey);
+        }
+      }
+    }
+  }
+  return neighbors;
+}

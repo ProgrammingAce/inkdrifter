@@ -1,4 +1,4 @@
-import { hexCenter, hexVertices, HEX_SIZE, neighborSet } from './hex.js';
+import { hexCenter, hexVertices, HEX_SIZE, neighborSet, neighborsOfSet } from './hex.js';
 
 function fillHex(ctx, cx, cy, size) {
   const verts = hexVertices(cx, cy, size);
@@ -42,7 +42,7 @@ export function renderOverlay(ctx, state, isHost, dragPos) {
 
   if (hostFogEnabled || playerFogEnabled) {
     const revealed = state._revealedSet;
-    const ringSet = marker ? neighborSet(marker.row, marker.col, rows, cols) : new Set();
+    const ringSet = revealed.size > 0 ? neighborsOfSet(revealed, rows, cols) : new Set();
     const isHostFog = isHost && fog.host;
 
     const fullFogAlpha = isHostFog ? 0.85 : 1.0;
@@ -96,8 +96,8 @@ export function renderOverlay(ctx, state, isHost, dragPos) {
     ctx.fill();
   }
 
-  // Draw pending request indicators (host only)
-  if (isHost && pendingRequests && pendingRequests.length > 0) {
+ // Draw pending request indicators
+  if (pendingRequests && pendingRequests.length > 0) {
     const pulse = 0.55 + 0.45 * Math.sin(Date.now() / 500);
     for (const req of pendingRequests) {
       const { x, y } = hexCenter(req.row, req.col, originX, originY);

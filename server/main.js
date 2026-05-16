@@ -243,6 +243,13 @@ io.on('connection', (socket) => {
       return;
     }
     const player = lobby.players[socket.data.playerId];
+    // Emit cancel for any replaced request from this player
+    if (result.cancelledRequestId) {
+      io.to(lobby.code).emit(EVENTS.REQUEST_CANCELLED, {
+        requestId: result.cancelledRequestId,
+        reason: 'replaced',
+      });
+    }
     io.to(lobby.code).emit(EVENTS.MOVE_REQUESTED, {
       playerId: socket.data.playerId,
       name: player.name,

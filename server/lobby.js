@@ -92,9 +92,6 @@ class Lobby {
     const prevRevealed = new Set(this.revealed);
     this.marker = { row, col };
     this.revealed.add(`${row},${col}`);
-    for (const [r, c] of hexNeighbors(row, col, this.rows, this.cols)) {
-      this.revealed.add(`${r},${c}`);
-    }
     const revealedDelta = [];
     for (const key of this.revealed) {
       if (!prevRevealed.has(key)) {
@@ -138,10 +135,20 @@ class Lobby {
     const nbrs = hexNeighbors(this.marker.row, this.marker.col, this.rows, this.cols);
     if (!nbrs.some(([r, c]) => r === row && c === col)) return { error: 'not_in_ring' };
 
-    const requestId = 'req_' + crypto.randomBytes(4).toString('hex');
-    this.pendingRequests[requestId] = { playerId, row, col, at: now };
+    // Cancel any existing request from this player
+    let cancelledRequestId = null;
+    for (const [requestId, req] of Object.entries(this.pendingRequests)) {
+      if (req.playerId === playerId) {
+        cancelledRequestId = requestId;
+        delete this.pendingRequests[requestId];
+        break;
+      }
+    }
+
+    const newRequestId = 'req_' + crypto.randomBytes(4).toString('hex');
+    this.pendingRequests[newRequestId] = { playerId, row, col, at: now };
     this.lastActivityAt = Date.now();
-    return { requestId };
+    return { requestId: newRequestId, cancelledRequestId };
   }
 
   cancelPlayerRequests(playerId) {
