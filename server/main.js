@@ -56,6 +56,47 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true, lobbies: manager.lobbies.size });
 });
 
+app.post('/api/lobbies/import', async (req, res) => {
+  const { hostName, status, fog, marker, revealedTiles } = req.body;
+  let rows = parseInt(req.body.rows, 10);
+  let cols = parseInt(req.body.cols, 10);
+  let seed = parseInt(req.body.seed, 10);
+  const name = sanitizeName(hostName);
+  if (!name) return res.status(400).json({ error: 'bad_host_name' });
+  if (isNaN(rows) || rows < MIN_GRID || rows > MAX_GRID) return res.status(400).json({ error: 'bad_rows' });
+  if (isNaN(cols) || cols < MIN_GRID || cols > MAX_GRID) return res.status(400).json({ error: 'bad_cols' });
+  if (isNaN(seed) || seed < 0 || seed > 0xFFFFFFFF) return res.status(400).json({ error: 'bad_seed' });
+
+  let lobby;
+  try {
+    lobby = await manager.createLobby({ rows, cols, seed, hostName: name });
+  } catch (e) {
+    if (e.code === 503) return res.status(503).json({ error: 'code_exhausted' });
+    throw e;
+  }
+
+  res.status(202).json({
+    code: lobby.code,
+    seed: lobby.seed,
+    rows: lobby.rows,
+    cols: lobby.cols,
+    status: lobby.status,
+    hostToken: lobby.hostToken,
+  });
+
+  renderQueue.render(seed, rows, cols).then(pngBuffer => {
+    const l = manager.getLobby(lobby.code);
+    if (!l) return;
+    l.setReady(pngBuffer);
+    l.loadImportState({ status, fog, marker, revealedTiles });
+    io.to(lobby.code).emit(EVENTS.MAP_READY, {});
+    broadcastLobbyState(lobby.code);
+  }).catch(err => {
+    console.error('Import render failed for lobby', lobby.code, err);
+    manager.destroyLobby(lobby.code, 'render_failed');
+  });
+});
+
 app.post('/api/lobbies', async (req, res) => {
   const { hostName, seed: seedRaw } = req.body;
   let { rows, cols } = req.body;
@@ -130,6 +171,13 @@ app.get('/lobbies/:code/map.png', (req, res) => {
   res.set('Content-Type', 'image/png');
   res.set('Cache-Control', 'public, max-age=31536000, immutable');
   res.send(lobby.pngBuffer);
+});
+
+app.get('/lobbies/:code/game-state.json', (req, res) => {
+  const lobby = manager.getLobby(req.params.code);
+  if (!lobby) return res.status(404).json({ error: 'no_such_lobby' });
+  res.set('Content-Type', 'application/json');
+  res.json(lobby.toJSONExport());
 });
 
 app.get('/api/lobbies/:code', (req, res) => {

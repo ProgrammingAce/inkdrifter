@@ -2,6 +2,74 @@ const createForm = document.getElementById('create-form');
 const joinForm = document.getElementById('join-form');
 const createStatus = document.getElementById('create-status');
 const joinStatus = document.getElementById('join-status');
+const importBtn = document.getElementById('import-btn');
+const importFileInput = document.getElementById('import-file-input');
+const hostNameInput = document.getElementById('host-name');
+const joinBtn = document.getElementById('join-btn');
+const playerNameInput = document.getElementById('player-name');
+
+joinBtn.addEventListener('click', (e) => {
+  if (joinBtn.disabled) e.preventDefault();
+});
+
+importBtn.addEventListener('click', () => {
+  importFileInput.value = '';
+  importFileInput.click();
+});
+
+importFileInput.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async (evt) => {
+    try {
+      const data = JSON.parse(evt.target.result);
+      if (!data.seed || !data.gridRows || !data.gridCols || !data.revealedTiles) {
+        createStatus.textContent = 'Invalid game state file.';
+        createStatus.className = 'status-msg error';
+        return;
+      }
+      createStatus.textContent = 'Importing…';
+      createStatus.className = 'status-msg';
+      const hostName = document.getElementById('host-name').value.trim();
+      const res = await fetch('/api/lobbies/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          hostName,
+          rows: data.gridRows,
+          cols: data.gridCols,
+          seed: data.seed,
+          status: data.status,
+          fog: data.fog,
+          marker: data.marker,
+          revealedTiles: data.revealedTiles,
+        }),
+      });
+      const result = await res.json();
+      if (!res.ok) {
+        createStatus.textContent = 'Error: ' + (result.error || res.statusText);
+        createStatus.className = 'status-msg error';
+        return;
+      }
+      localStorage.setItem(`hostToken_${result.code}`, result.hostToken);
+      createStatus.textContent = 'Game state imported! Redirecting…';
+      window.location.href = `/lobby/${result.code}`;
+    } catch (err) {
+      createStatus.textContent = 'Network error. Please try again.';
+      createStatus.className = 'status-msg error';
+    }
+  };
+  reader.readAsText(file);
+});
+
+hostNameInput.addEventListener('input', () => {
+  importBtn.disabled = !hostNameInput.value.trim();
+});
+
+playerNameInput.addEventListener('input', () => {
+  joinBtn.disabled = !playerNameInput.value.trim();
+});
 
 createForm.addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -37,6 +105,10 @@ createForm.addEventListener('submit', async (e) => {
 });
 
 joinForm.addEventListener('submit', async (e) => {
+  if (joinBtn.disabled) {
+    e.preventDefault();
+    return;
+  }
   e.preventDefault();
   const code = document.getElementById('join-code').value.trim().padStart(5, '0');
   const playerName = document.getElementById('player-name').value.trim();

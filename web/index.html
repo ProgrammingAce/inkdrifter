@@ -37,6 +37,11 @@
           <input type="number" id="create-seed" placeholder="e.g. 42" min="0" max="4294967295">
         </div>
         <button type="submit" class="btn">Generate &amp; Host</button>
+        <div class="import-row">
+          <button type="button" id="import-btn" class="btn btn-import" disabled>&#x1f4c1; Import Game</button>
+          <div class="import-tooltip">Enter your name before importing a game</div>
+        </div>
+        <input type="file" id="import-file-input" accept=".json" style="display:none;">
       </form>
       <p id="create-status" class="status-msg"></p>
     </div>
@@ -53,7 +58,10 @@
           <label for="player-name">Your name</label>
           <input type="text" id="player-name" placeholder="Enter your name" maxlength="24" required>
         </div>
-        <button type="submit" class="btn">Join Lobby</button>
+        <div class="join-row">
+          <button type="submit" id="join-btn" class="btn" disabled>Join Lobby</button>
+          <div class="join-tooltip">Enter your name before Joining a lobby</div>
+        </div>
       </form>
       <p id="join-status" class="status-msg"></p>
     </div>

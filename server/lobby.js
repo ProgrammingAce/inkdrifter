@@ -193,6 +193,44 @@ class Lobby {
     this.lastActivityAt = Date.now();
   }
 
+  loadImportState({ status, fog, marker, revealedTiles }) {
+    this.fog = fog || { host: true, players: true };
+    this.revealed = new Set(revealedTiles.map(([r, c]) => `${r},${c}`));
+    if (marker) {
+      this.marker = { row: marker.row, col: marker.col };
+    }
+    if (status === 'ready') {
+      this.status = 'ready';
+    }
+  }
+
+  toJSONExport() {
+    const revealed = Array.from(this.revealed).map(key => key.split(',').map(Number));
+    const players = {};
+    for (const [pid, p] of Object.entries(this.players)) {
+      players[pid] = { name: p.name, connected: p.connected };
+    }
+    const pendingRequests = Object.entries(this.pendingRequests)
+      .map(([requestId, req]) => ({ requestId, ...req }));
+    return {
+      code: this.code,
+      seed: this.seed,
+      gridRows: this.rows,
+      gridCols: this.cols,
+      canvasWidth: this.canvasWidth,
+      canvasHeight: this.canvasHeight,
+      status: this.status,
+      fog: { ...this.fog },
+      marker: this.marker ? { ...this.marker } : null,
+      revealedTiles: revealed,
+      pendingRequests,
+      players,
+      hostName: this.hostName,
+      hostConnected: this.hostConnected,
+      createdAt: this.createdAt,
+    };
+  }
+
   get playerCount() {
     return Object.keys(this.players).length + 1; // +1 for host
   }

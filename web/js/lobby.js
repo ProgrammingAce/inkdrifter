@@ -409,7 +409,7 @@ if (isHost && hostControlsEl) {
     socket.emit(EVENTS.FOG_TOGGLE, { target: 'players', enabled: fogPlayersEl.checked });
   });
   newGameBtn?.addEventListener('click', () => {
-    if (confirm('End this lobby and return to the home page?')) {
+    if (confirm('Unsaved progress will be lost, are you sure you want to exit this game and return to the main menu?')) {
       socket.emit(EVENTS.NEW_GAME);
       window.location.href = '/';
     }
@@ -429,6 +429,26 @@ if (isHost && hostControlsEl) {
     link.click();
     document.body.removeChild(link);
     showToast('Map export started.');
+  });
+  document.getElementById('export-json-btn')?.addEventListener('click', () => {
+    fetch(`/lobbies/${code}/game-state.json?t=${Date.now()}`)
+      .then(res => {
+        if (!res.ok) throw new Error('Export failed');
+        return res.json();
+      })
+      .then(data => {
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `inkdrifter-game-state-${code}.json`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        showToast('Game state exported.');
+      })
+      .catch(() => showToast('Failed to export game state.', true));
   });
 }
 
