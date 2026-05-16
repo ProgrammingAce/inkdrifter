@@ -1551,12 +1551,17 @@ function drawPonds(canvas, ponds, opts = {}) {
     const p = ponds[pi];
     const center = hexCenter(p.r, p.c, opts);
     const rng = createRng(((seed + pi * 0x9e3779b1) ^ 0x70AD0001) >>> 0);
-    // Pond outline: irregular blob, radius ~30% of hex size.
-    const baseR = HEX_SIZE * (0.26 + rng.uniform() * 0.08);
-    const N = 24;
+    // Offset the pond from hex center so it can spill into adjacent tiles.
+    const offAng = rng.uniform() * Math.PI * 2;
+    const offDist = rng.uniform() * HEX_SIZE * 0.35;
+    const ox = center.x + Math.cos(offAng) * offDist;
+    const oy = center.y + Math.sin(offAng) * offDist;
+    // Pond outline: small, very blobby irregular shape.
+    const baseR = HEX_SIZE * (0.30 + rng.uniform() * 0.15);
+    const N = 12 + Math.floor(rng.uniform() * 8); // 12–19 samples
     const radii = new Array(N);
     for (let i = 0; i < N; i++) radii[i] = rng.normal();
-    const sm = gaussianFilter1D(radii, 2.5);
+    const sm = gaussianFilter1D(radii, 1.0);
     // Wrap-around smoothing pass so the loop closes seamlessly.
     const wrapped = sm.slice();
     for (let i = 0; i < N; i++) {
@@ -1565,14 +1570,14 @@ function drawPonds(canvas, ponds, opts = {}) {
     const pts = [];
     for (let i = 0; i < N; i++) {
       const ang = (i / N) * Math.PI * 2;
-      const r = baseR * (1.0 + wrapped[i] * 0.18);
+      const r = baseR * (1.0 + wrapped[i] * 1.2);
       pts.push({
-        x: center.x + Math.cos(ang) * r,
-        y: center.y + Math.sin(ang) * r * 0.78, // slight vertical squish
+        x: ox + Math.cos(ang) * r,
+        y: oy + Math.sin(ang) * r,
       });
     }
     // Outline
-    ctx.lineWidth = Math.max(1, 1.7 * scale);
+    ctx.lineWidth = Math.max(1, 6.0 * scale);
     ctx.beginPath();
     ctx.moveTo(pts[0].x * scale, pts[0].y * scale);
     for (let i = 1; i < N; i++) ctx.lineTo(pts[i].x * scale, pts[i].y * scale);
@@ -1590,8 +1595,8 @@ function drawPonds(canvas, ponds, opts = {}) {
       let mode = 'dash';
       for (let i = 0; i <= N; i++) {
         const idx = i % N;
-        const px = center.x + (pts[idx].x - center.x) * shrink;
-        const py = center.y + (pts[idx].y - center.y) * shrink;
+        const px = ox + (pts[idx].x - ox) * shrink;
+        const py = oy + (pts[idx].y - oy) * shrink;
         if (mode === 'dash') {
           if (!drawing) { ctx.moveTo(px * scale, py * scale); drawing = true; }
           else ctx.lineTo(px * scale, py * scale);
@@ -1863,12 +1868,6 @@ function paintParchment(canvas, opts = {}) {
     ctx.fillStyle = grad;
     ctx.fillRect(x - r, y - r, r * 2, r * 2);
   }
-
-  const vig = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.3, W / 2, H / 2, Math.max(W, H) * 0.7);
-  vig.addColorStop(0, 'rgba(0, 0, 0, 0)');
-  vig.addColorStop(1, 'rgba(25, 15, 8, 0.35)');
-  ctx.fillStyle = vig;
-  ctx.fillRect(0, 0, W, H);
 }
 
 // ============================================================
@@ -2378,6 +2377,15 @@ function renderMap(opts = {}) {
   if (mountainHexes.length > 0) {
     drawMountains(out, mountainHexes, { ...gridOpts, seed });
   }
+
+  // Vignette drawn last so it darkens everything at the edges.
+  const vigCtx = out.getContext('2d');
+  const vig = vigCtx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.2, W / 2, H / 2, Math.max(W, H) * 0.75);
+  vig.addColorStop(0, 'rgba(0, 0, 0, 0)');
+  vig.addColorStop(0.5, 'rgba(25, 15, 8, 0.15)');
+  vig.addColorStop(1, 'rgba(25, 15, 8, 0.55)');
+  vigCtx.fillStyle = vig;
+  vigCtx.fillRect(0, 0, W, H);
 
   return {
     canvas: out,
