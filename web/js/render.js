@@ -37,28 +37,45 @@ export function renderOverlay(ctx, state, isHost, dragPos) {
   const H = ctx.canvas.height;
   ctx.clearRect(0, 0, W, H);
 
-  // Host always has an opaque view of the map — fog never applies to them.
-  const fogEnabled = isHost ? false : fog.players;
+  const hostFogEnabled = isHost && fog.host;
+  const playerFogEnabled = !isHost && fog.players;
 
-  if (fogEnabled) {
+  if (hostFogEnabled || playerFogEnabled) {
     const revealed = state._revealedSet;
     const ringSet = marker ? neighborSet(marker.row, marker.col, rows, cols) : new Set();
-    const centerKey = marker ? `${marker.row},${marker.col}` : null;
+    const isHostFog = isHost && fog.host;
 
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        const key = `${r},${c}`;
-        const isCenter = key === centerKey;
-        if (isCenter) continue;
-        const isRing = ringSet.has(key);
-        const wasSeen = revealed.has(key);
-        let fillColor;
-        if (isRing && !wasSeen) fillColor = 'rgba(0,0,0,0.5)';
-        else if (!wasSeen) fillColor = 'rgba(0,0,0,1.0)';
-        if (fillColor) {
+    const fullFogAlpha = isHostFog ? 0.85 : 1.0;
+    const ringFogAlpha = isHostFog ? 0.6 : 0.8;
+
+    // Draw base fog
+    ctx.fillStyle = `rgba(0,0,0,${fullFogAlpha})`;
+    ctx.fillRect(0, 0, W, H);
+
+    // Clear revealed hexes and ring hexes (fully transparent)
+    ctx.globalCompositeOperation = 'destination-out';
+    for (const key of revealed) {
+      const [r, c] = key.split(',').map(Number);
+      const { x, y } = hexCenter(r, c, originX, originY);
+      fillHex(ctx, x, y, hexSize + 2);
+    }
+    if (marker) {
+      for (const key of ringSet) {
+        const [r, c] = key.split(',').map(Number);
+        const { x, y } = hexCenter(r, c, originX, originY);
+        fillHex(ctx, x, y, hexSize + 2);
+      }
+    }
+    ctx.globalCompositeOperation = 'source-over';
+
+    // Redraw ring fog at target alpha on top of cleared ring area
+    if (marker && ringFogAlpha > 0) {
+      ctx.fillStyle = `rgba(0,0,0,${ringFogAlpha})`;
+      for (const key of ringSet) {
+        if (!revealed.has(key)) {
+          const [r, c] = key.split(',').map(Number);
           const { x, y } = hexCenter(r, c, originX, originY);
-          ctx.fillStyle = fillColor;
-          fillHex(ctx, x, y, hexSize);
+          fillHex(ctx, x, y, hexSize + 2);
         }
       }
     }

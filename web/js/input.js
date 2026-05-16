@@ -3,7 +3,6 @@ import { EVENTS } from './socket.js';
 
 export function initInput({ overlayCanvas, getState, getIsHost, socket, onDragPos }) {
   let dragging = false;
-  let lastMarkerEmit = 0;
 
   function canvasPos(e) {
     const rect = overlayCanvas.getBoundingClientRect();
@@ -51,15 +50,6 @@ export function initInput({ overlayCanvas, getState, getIsHost, socket, onDragPo
     if (!state) return;
     const { px, py } = canvasPos(e);
     onDragPos({ x: px, y: py });
-
-    const now = Date.now();
-    if (now - lastMarkerEmit >= 50) {
-      const hex = pixelToHex(px, py, state.originX, state.originY, state.rows, state.cols);
-      if (hex) {
-        socket.emit(EVENTS.MARKER_MOVE, { row: hex.row, col: hex.col });
-        lastMarkerEmit = now;
-      }
-    }
   });
 
   window.addEventListener('mouseup', (e) => {
