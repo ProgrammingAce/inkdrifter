@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Inkdrifter — Hex Map Explorer</title>
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+<div class="home-page">
+  <header class="home-header">
+    <h1>Inkdrifter</h1>
+    <p>Generate a world. Share the code. Explore together.</p>
+  </header>
+
+  <div class="forms-row">
+    <!-- Create lobby -->
+    <div class="card">
+      <h2>Create a Lobby</h2>
+      <form id="create-form" novalidate>
+        <div class="form-group">
+          <label for="host-name">Your name</label>
+          <input type="text" id="host-name" placeholder="Enter your name" maxlength="24" required>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="create-rows">Rows</label>
+            <input type="number" id="create-rows" value="12" min="6" max="50">
+          </div>
+          <div class="form-group">
+            <label for="create-cols">Columns</label>
+            <input type="number" id="create-cols" value="16" min="6" max="50">
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="create-seed">Seed <span class="hint">(optional — leave blank for random)</span></label>
+          <input type="number" id="create-seed" placeholder="e.g. 42" min="0" max="4294967295">
+        </div>
+        <button type="submit" class="btn">Generate &amp; Host</button>
+      </form>
+      <p id="create-status" class="status-msg"></p>
+    </div>
+
+    <!-- Join lobby -->
+    <div class="card">
+      <h2>Join a Lobby</h2>
+      <form id="join-form" novalidate>
+        <div class="form-group">
+          <label for="join-code">Lobby code</label>
+          <input type="text" id="join-code" placeholder="5-digit code" maxlength="5" pattern="\d{5}" required>
+        </div>
+        <div class="form-group">
+          <label for="player-name">Your name</label>
+          <input type="text" id="player-name" placeholder="Enter your name" maxlength="24" required>
+        </div>
+        <button type="submit" class="btn">Join Lobby</button>
+      </form>
+      <p id="join-status" class="status-msg"></p>
+    </div>
+  </div>
+</div>
+
+<script src="js/home.js" type="module"></script>
+</body>
+</html>

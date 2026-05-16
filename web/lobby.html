@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Inkdrifter — Lobby</title>
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+<div class="lobby-page">
+  <!-- Map area -->
+  <div class="map-area">
+    <div id="map-scroll" class="map-scroll">
+      <div id="loading" class="loading-msg">
+        <div class="spinner"></div>
+        <span>Generating map…</span>
+      </div>
+      <div id="map-stack">
+        <canvas id="base-canvas"></canvas>
+        <canvas id="overlay-canvas"></canvas>
+        <div id="marker-banner"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <!-- Lobby info -->
+    <div class="sidebar-section">
+      <h3>Lobby</h3>
+      <div class="code-display">
+        <span id="lobby-code" class="code-value">—</span>
+        <button id="copy-code-btn" class="btn-icon" title="Copy code">Copy</button>
+      </div>
+      <div class="seed-row">
+        <span style="font-size:0.8rem;color:#9a7a55;">Seed:</span>
+        <span id="lobby-seed" class="seed-value">—</span>
+        <button id="copy-seed-btn" class="btn-icon" title="Copy seed">Copy</button>
+      </div>
+    </div>
+
+    <!-- Players -->
+    <div class="sidebar-section">
+      <h3>Players</h3>
+      <ul id="player-list" class="player-list"></ul>
+    </div>
+
+    <!-- Fog controls (host only) -->
+    <div id="host-controls" class="sidebar-section" style="display:none;">
+      <h3>Fog of War</h3>
+      <div class="fog-controls">
+        <label class="fog-row">
+          <input type="checkbox" id="fog-host" checked>
+          Show fog to me
+        </label>
+        <label class="fog-row">
+          <input type="checkbox" id="fog-players" checked>
+          Show fog to players
+        </label>
+      </div>
+    </div>
+
+    <!-- Pending requests -->
+    <div class="sidebar-section">
+      <h3>Move Requests</h3>
+      <p id="no-requests" class="no-requests">No pending requests.</p>
+      <ul id="pending-list" class="request-list"></ul>
+    </div>
+
+    <!-- New game (host only) -->
+    <div id="host-controls-bottom" class="sidebar-section" style="display:none;">
+      <button id="new-game-btn" class="btn-danger">&#8635; New Game</button>
+    </div>
+  </aside>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script type="module" src="/js/lobby.js"></script>
+<script type="module">
+  // Show the bottom host controls if the script detects host role
+  const code = window.location.pathname.split('/').pop();
+  if (localStorage.getItem('hostToken_' + code)) {
+    document.getElementById('host-controls-bottom').style.display = '';
+  }
+</script>
+</body>
+</html>
