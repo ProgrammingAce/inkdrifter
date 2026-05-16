@@ -421,6 +421,15 @@ if (isHost && hostControlsEl) {
   document.getElementById('start-game-btn')?.addEventListener('click', () => {
     socket.emit(EVENTS.START_GAME);
   });
+  document.getElementById('export-png-btn')?.addEventListener('click', () => {
+    const link = document.createElement('a');
+    link.href = `/lobbies/${code}/map.png?download=1&t=${Date.now()}`;
+    link.download = `inkdrifter-map-${code}.png`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showToast('Map export started.');
+  });
 }
 
 // ── Connect ───────────────────────────────────────────────────────────────────
