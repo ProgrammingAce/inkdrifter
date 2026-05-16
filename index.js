@@ -150,11 +150,13 @@ function buildVertexGraph(opts = {}) {
 // RIVER PATH
 // ============================================================
 function randomRiverPath(seed, opts = {}) {
+  const cols = opts.cols ?? DEFAULT_COLS;
   const startSide = opts.startSide ?? 'left';
   const targetSide = opts.targetSide ?? 'right';
-  const maxSteps = opts.maxSteps ?? 120;
+  // Scale path budgets with grid width so rivers can traverse large maps.
+  const maxSteps = opts.maxSteps ?? Math.max(120, cols * 12);
   const maxAttempts = opts.maxAttempts ?? 40;
-  const minLength = opts.minLength ?? 40;
+  const minLength = opts.minLength ?? Math.max(40, cols * 6);
   const adj = opts.adj ?? buildVertexGraph(opts);
 
   const rng = createRng(seed);
@@ -212,19 +214,16 @@ function randomRiverPath(seed, opts = {}) {
     }
 
     const pts = path.map(parseKey);
-    if (reached) return { points: pts, reached: true, attempts: attempt + 1 };
-    if (best === null || pts.length > best.length) { best = pts; bestReached = false; }
+    if (reached) return { points: pts, keys: path.slice(), reached: true, attempts: attempt + 1 };
+    if (best === null || pts.length > best.length) { best = { pts, keys: path.slice() }; bestReached = false; }
   }
-  return { points: best || [], reached: bestReached, attempts: maxAttempts };
+  return { points: best ? best.pts : [], keys: best ? best.keys : [], reached: bestReached, attempts: maxAttempts };
 }
 
-function hexEdgeCenterline(seed, opts = {}) {
+function densifyAndSmooth(raw, opts = {}) {
   const densifySteps = opts.densifySteps ?? 8;
   const smoothSigma = opts.densifySmoothSigma ?? 0.8;
-  const result = randomRiverPath(seed, opts);
-  const raw = result.points;
-  if (raw.length < 2) return { points: [], reached: false };
-
+  if (raw.length < 2) return [];
   const dense = [];
   for (let i = 0; i < raw.length - 1; i++) {
     const a = raw[i], b = raw[i + 1];
@@ -236,8 +235,168 @@ function hexEdgeCenterline(seed, opts = {}) {
   dense.push(raw[raw.length - 1]);
   const dx = gaussianFilter1D(dense.map(p => p.x), smoothSigma);
   const dy = gaussianFilter1D(dense.map(p => p.y), smoothSigma);
-  const points = dense.map((_, i) => ({ x: dx[i], y: dy[i] }));
-  return { points, reached: result.reached };
+  return dense.map((_, i) => ({ x: dx[i], y: dy[i] }));
+}
+
+function hexEdgeCenterline(seed, opts = {}) {
+  const result = randomRiverPath(seed, opts);
+  const points = densifyAndSmooth(result.points, opts);
+  return { points, reached: result.reached, keys: result.keys ?? [] };
+}
+
+// Walks from a random edge vertex toward the nearest vertex in `existingKeys`,
+// terminating the moment a neighbor lies on an existing river. Produces a
+// tributary whose terminus forms a T-junction with the trunk.
+function tributaryPath(seed, existingKeys, opts = {}) {
+  const cols = opts.cols ?? DEFAULT_COLS;
+  const rows = opts.rows ?? DEFAULT_ROWS;
+  const maxSteps = opts.maxSteps ?? Math.max(100, (cols + rows) * 6);
+  const maxAttempts = opts.maxAttempts ?? 40;
+  const minLength = opts.minLength ?? Math.max(8, Math.floor((cols + rows) / 3));
+  const adj = opts.adj ?? buildVertexGraph(opts);
+
+  const rng = createRng(seed);
+  const allKeys = Array.from(adj.keys());
+  if (existingKeys.size === 0) return { points: [], keys: [], reached: false };
+
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const k of allKeys) {
+    const p = parseKey(k);
+    if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+  }
+  const onEdge = (p) =>
+    Math.abs(p.x - minX) < 1 || Math.abs(p.x - maxX) < 1 ||
+    Math.abs(p.y - minY) < 1 || Math.abs(p.y - maxY) < 1;
+
+  const existingPts = [];
+  for (const k of existingKeys) existingPts.push(parseKey(k));
+  const distToExisting = (p) => {
+    let best = Infinity;
+    for (const q of existingPts) {
+      const dx = q.x - p.x, dy = q.y - p.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < best) best = d2;
+    }
+    return Math.sqrt(best);
+  };
+
+  // Start from an edge vertex that isn't part of an existing river and is
+  // at least a few cells away from one (so the tributary has room to grow).
+  const minStartDist = HEX_W * 1.5;
+  const startCandidates = allKeys.filter(k => {
+    if (existingKeys.has(k)) return false;
+    const p = parseKey(k);
+    if (!onEdge(p)) return false;
+    return distToExisting(p) >= minStartDist;
+  });
+  if (startCandidates.length === 0) return { points: [], keys: [], reached: false };
+
+  let best = null;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const start = startCandidates[rng.uniformInt(0, startCandidates.length)];
+    const path = [start];
+    const visited = new Set([start]);
+    let prev = null;
+    let reached = false;
+
+    for (let step = 0; step < maxSteps; step++) {
+      const cur = path[path.length - 1];
+      const curP = parseKey(cur);
+      const nbrsAll = Array.from(adj.get(cur));
+
+      // T-junction: once long enough, snap onto any neighbor already on a
+      // trunk river. That neighbor becomes the final point of this path.
+      if (path.length >= minLength) {
+        const termNbrs = nbrsAll.filter(n => existingKeys.has(n));
+        if (termNbrs.length > 0) {
+          const pick = termNbrs[rng.uniformInt(0, termNbrs.length)];
+          path.push(pick);
+          reached = true;
+          break;
+        }
+      }
+
+      const nbrs = nbrsAll.filter(n => !visited.has(n) && n !== prev && !existingKeys.has(n));
+      if (nbrs.length === 0) break;
+
+      const curDist = distToExisting(curP);
+      const weights = nbrs.map(n => {
+        const d = distToExisting(parseKey(n));
+        const adv = curDist - d;
+        if (adv > 0.01) return 2.4;
+        if (adv < -0.01) return 0.4;
+        return 1.2;
+      });
+      const choice = weightedChoice(nbrs, weights, rng);
+      path.push(choice);
+      visited.add(choice);
+      prev = cur;
+    }
+
+    const pts = path.map(parseKey);
+    if (reached) return { points: pts, keys: path.slice(), reached: true, attempts: attempt + 1 };
+    if (best === null || pts.length > best.pts.length) best = { pts, keys: path.slice() };
+  }
+  return { points: best ? best.pts : [], keys: best ? best.keys : [], reached: false };
+}
+
+function tributaryCenterline(seed, existingKeys, opts = {}) {
+  const result = tributaryPath(seed, existingKeys, opts);
+  const points = densifyAndSmooth(result.points, opts);
+  return { points, reached: result.reached, keys: result.keys };
+}
+
+// Decide how many rivers a map of this size should have.
+function defaultRiverCount(rows, cols) {
+  return Math.max(1, Math.floor((rows + cols - 12) / 14));
+}
+
+// Generate one trunk plus zero or more tributaries. Each subsequent path
+// avoids re-using prior vertices and is allowed to terminate on one of them,
+// creating a T-junction in the rendered output.
+function generateRivers(seed, opts = {}) {
+  const rows = opts.rows ?? DEFAULT_ROWS;
+  const cols = opts.cols ?? DEFAULT_COLS;
+  const count = opts.riverCount ?? defaultRiverCount(rows, cols);
+  const adj = opts.adj ?? buildVertexGraph(opts);
+  const sharedOpts = { ...opts, adj };
+
+  const rivers = [];
+  const allKeys = new Set();
+  // Vertex key → index of the river that first claimed it. Used to find which
+  // river a tributary terminates on so the child can be clipped by the parent.
+  const keyToRiver = new Map();
+  const claim = (riverIdx, keys) => {
+    for (const k of keys) {
+      allKeys.add(k);
+      if (!keyToRiver.has(k)) keyToRiver.set(k, riverIdx);
+    }
+  };
+
+  const trunk = hexEdgeCenterline(seed, sharedOpts);
+  trunk.parentIndex = null;
+  rivers.push(trunk);
+  claim(0, trunk.keys);
+
+  for (let i = 1; i < count; i++) {
+    const trib = tributaryCenterline((seed * 0x27d4eb2d + i * 0x9e3779b1) >>> 0, allKeys, sharedOpts);
+    if (trib.points.length < 2) continue;
+    // If the tributary reached an existing vertex, the last key is that
+    // terminator and identifies the parent. Otherwise it's standalone.
+    let parentIndex = null;
+    if (trib.reached && trib.keys.length > 0) {
+      const last = trib.keys[trib.keys.length - 1];
+      if (keyToRiver.has(last)) parentIndex = keyToRiver.get(last);
+    }
+    trib.parentIndex = parentIndex;
+    const idx = rivers.length;
+    rivers.push(trib);
+    // The terminator belongs to the parent — don't reassign it.
+    const ownKeys = parentIndex !== null ? trib.keys.slice(0, -1) : trib.keys;
+    claim(idx, ownKeys);
+  }
+  return rivers;
 }
 
 // ============================================================
@@ -362,6 +521,17 @@ function riverBankPolygon(geom) {
   const poly = new Array(geom.M * 2);
   for (let i = 0; i < geom.M; i++) poly[i] = geom.upperOuter[i];
   for (let i = 0; i < geom.M; i++) poly[geom.M + i] = geom.lowerOuter[geom.M - 1 - i];
+  return poly;
+}
+
+// Inner (water) polygon, bounded by upperInner / lowerInner. Used when a
+// child river's notch is cut from its parent's bank — the gap should match
+// the child's water width, not its full bank-to-bank width.
+function riverWaterPolygon(geom) {
+  if (!geom) return null;
+  const poly = new Array(geom.M * 2);
+  for (let i = 0; i < geom.M; i++) poly[i] = geom.upperInner[i];
+  for (let i = 0; i < geom.M; i++) poly[geom.M + i] = geom.lowerInner[geom.M - 1 - i];
   return poly;
 }
 
@@ -798,7 +968,8 @@ function drawOcean(canvas, water, sides, opts = {}) {
 // is supplied.
 function drawCoastline(ctx, polylines, opts, env) {
   const { scale, coastWidth, lineColor } = env;
-  const bankPoly = opts.riverBankPolygon ?? null;
+  const bankPolys = opts.riverBankPolygons
+    ?? (opts.riverBankPolygon ? [opts.riverBankPolygon] : null);
   const riverPoints = opts.riverPoints ?? null;
   const coastClipRadius = opts.riverClipRadius ?? 14;
   const ccr2 = coastClipRadius * coastClipRadius;
@@ -811,8 +982,10 @@ function drawCoastline(ctx, polylines, opts, env) {
     let drawing = false;
     for (let i = 0; i < poly.length; i++) {
       let ok = true;
-      if (bankPoly) {
-        if (pointInPolygon(poly[i].x, poly[i].y, bankPoly)) ok = false;
+      if (bankPolys) {
+        for (const bp of bankPolys) {
+          if (pointInPolygon(poly[i].x, poly[i].y, bp)) { ok = false; break; }
+        }
       } else if (riverPoints) {
         for (let m = 0; m < riverPoints.length; m++) {
           const dx = riverPoints[m].x - poly[i].x;
@@ -979,6 +1152,575 @@ function drawCoastWaveRings(ctx, polylines, water, opts, env) {
 }
 
 // ============================================================
+// BIOMES, LAKES, PONDS
+// ============================================================
+
+// Axial cube distance between two offset-rows (odd-r) hexes, per BIOMES.md §2.
+function hexCubeDistance(r1, c1, r2, c2) {
+  const x1 = c1 - (r1 - (r1 & 1)) / 2;
+  const z1 = r1;
+  const y1 = -x1 - z1;
+  const x2 = c2 - (r2 - (r2 & 1)) / 2;
+  const z2 = r2;
+  const y2 = -x2 - z2;
+  return (Math.abs(x1 - x2) + Math.abs(y1 - y2) + Math.abs(z1 - z2)) / 2;
+}
+
+// Six neighbors as (r,c) pairs, for biome / lake adjacency work.
+function hexNeighbors(r, c) {
+  const out = new Array(6);
+  for (let d = 0; d < 6; d++) out[d] = neighborOf(r, c, d);
+  return out;
+}
+
+// Smooth a Map<"r,c", number> by averaging each hex with its in-set neighbors
+// (weights: center 1.0, neighbors 0.5). Hexes outside `inSet` are ignored.
+function smoothHexField(field, inSet, passes) {
+  let cur = field;
+  for (let p = 0; p < passes; p++) {
+    const next = new Map();
+    for (const [key, v] of cur) {
+      const [r, c] = key.split(',').map(Number);
+      let sum = v * 1.0;
+      let wsum = 1.0;
+      for (const n of hexNeighbors(r, c)) {
+        const nk = `${n.r},${n.c}`;
+        if (!inSet.has(nk)) continue;
+        sum += cur.get(nk) * 0.5;
+        wsum += 0.5;
+      }
+      next.set(key, sum / wsum);
+    }
+    cur = next;
+  }
+  return cur;
+}
+
+// Rank-normalize a Map<key, number> to [0, 1] by percentile.
+function rankNormalize(field) {
+  const entries = [...field.entries()];
+  entries.sort((a, b) => a[1] - b[1]);
+  const N = entries.length;
+  const out = new Map();
+  if (N === 0) return out;
+  if (N === 1) { out.set(entries[0][0], 0.5); return out; }
+  for (let i = 0; i < N; i++) out.set(entries[i][0], i / (N - 1));
+  return out;
+}
+
+// Collect the set of land hexes the river passes through (any river).
+function riverHexSet(rivers, water, gridOpts) {
+  const set = new Set();
+  if (!rivers) return set;
+  for (const river of rivers) {
+    if (!river || !river.points) continue;
+    for (const p of river.points) {
+      const h = hexAtPoint(p.x, p.y, gridOpts);
+      if (!h) continue;
+      const k = `${h.r},${h.c}`;
+      if (water && water.has(k)) continue;
+      set.add(k);
+    }
+  }
+  return set;
+}
+
+// Compute elevation + moisture fields for every hex in landSet, per BIOMES.md §4.
+// `coastWater` is the water set that defines coast adjacency (ocean only for the
+// lake-placement pass; ocean+lakes for the final biome pass).
+function computeScalarFields(biomeRng, landSet, coastWater, riverHexes, rows, cols) {
+  const isOffGrid = (r, c) => r < 0 || r >= rows || c < 0 || c >= cols;
+  const isCoastAdj = (r, c) => {
+    for (const n of hexNeighbors(r, c)) {
+      if (isOffGrid(n.r, n.c)) return true;
+      if (coastWater && coastWater.has(`${n.r},${n.c}`)) return true;
+    }
+    return false;
+  };
+  const isRiverAdj = (r, c) => {
+    const k = `${r},${c}`;
+    if (riverHexes.has(k)) return true;
+    for (const n of hexNeighbors(r, c)) {
+      if (riverHexes.has(`${n.r},${n.c}`)) return true;
+    }
+    return false;
+  };
+  const isNearWater2 = (r, c) => {
+    for (let dr = -2; dr <= 2; dr++) {
+      for (let dc = -2; dc <= 2; dc++) {
+        const nr = r + dr, nc = c + dc;
+        if (isOffGrid(nr, nc)) continue;
+        if (hexCubeDistance(r, c, nr, nc) > 2) continue;
+        if (riverHexes.has(`${nr},${nc}`)) return true;
+        if (coastWater && coastWater.has(`${nr},${nc}`)) return true;
+      }
+    }
+    return false;
+  };
+
+  // Elevation
+  let E = new Map();
+  for (const key of landSet) E.set(key, biomeRng.normal());
+  E = smoothHexField(E, landSet, 2);
+  // Coast bias: subtract 0.6 from coast-adjacent, re-smooth one pass.
+  const Ebias = new Map();
+  for (const [key, v] of E) {
+    const [r, c] = key.split(',').map(Number);
+    Ebias.set(key, isCoastAdj(r, c) ? v - 0.6 : v);
+  }
+  E = smoothHexField(Ebias, landSet, 1);
+  E = rankNormalize(E);
+
+  // Moisture
+  let M = new Map();
+  for (const key of landSet) M.set(key, biomeRng.normal());
+  M = smoothHexField(M, landSet, 2);
+  const Mbias = new Map();
+  for (const [key, v] of M) {
+    const [r, c] = key.split(',').map(Number);
+    let bonus = 0;
+    const riverA = isRiverAdj(r, c);
+    const coastA = isCoastAdj(r, c);
+    if (riverA) bonus += 1.0;
+    else if (coastA) bonus += 0.5;
+    if (!riverA && !coastA && isNearWater2(r, c)) bonus += 0.25;
+    Mbias.set(key, v + bonus);
+  }
+  M = rankNormalize(Mbias);
+
+  return { E, M, isCoastAdj, isRiverAdj };
+}
+
+// Per BIOMES.md §5–6. Classify each land hex, clean up isolated mountains,
+// place cities greedily under a 6-tile minimum spacing.
+function classifyBiomes(biomeRng, landSet, E, M, isCoastAdj, isRiverAdj) {
+  const baseTags = new Map();
+  for (const key of landSet) {
+    const [r, c] = key.split(',').map(Number);
+    const e = E.get(key);
+    const m = M.get(key);
+    let tag;
+    if (e >= 0.85) tag = 'mountains';
+    else if (e >= 0.65) tag = 'hills';
+    else if (m >= 0.80 && (isRiverAdj(r, c) || isCoastAdj(r, c))) tag = 'swamp';
+    else if (m >= 0.55) tag = 'forest';
+    else tag = 'plains';
+    baseTags.set(key, tag);
+  }
+  // Mountain isolation pass: a mountains hex with no mountains/hills neighbor
+  // becomes hills.
+  for (const [key, tag] of baseTags) {
+    if (tag !== 'mountains') continue;
+    const [r, c] = key.split(',').map(Number);
+    let touchesRange = false;
+    for (const n of hexNeighbors(r, c)) {
+      const t = baseTags.get(`${n.r},${n.c}`);
+      if (t === 'mountains' || t === 'hills') { touchesRange = true; break; }
+    }
+    if (!touchesRange) baseTags.set(key, 'hills');
+  }
+
+  // City scoring + greedy placement
+  const eligible = [];
+  for (const [key, tag] of baseTags) {
+    if (tag !== 'plains' && tag !== 'forest' && tag !== 'hills') continue;
+    const [r, c] = key.split(',').map(Number);
+    let score = 0;
+    if (isRiverAdj(r, c)) score += 3;
+    if (isCoastAdj(r, c)) score += 2;
+    if (tag === 'plains') score += 2;
+    else if (tag === 'hills') score += 1;
+    score += biomeRng.uniform() * 0.5;
+    eligible.push({ key, r, c, score });
+  }
+  eligible.sort((a, b) => b.score - a.score);
+  const Ntarget = Math.max(1, Math.min(5, Math.round(landSet.size / 18)));
+  const placed = [];
+  for (const cand of eligible) {
+    let ok = true;
+    for (const p of placed) {
+      if (hexCubeDistance(cand.r, cand.c, p.r, p.c) < 6) { ok = false; break; }
+    }
+    if (ok) {
+      placed.push(cand);
+      if (placed.length >= Ntarget) break;
+    }
+  }
+  const tags = new Map(baseTags);
+  const cities = placed.map(p => ({ r: p.r, c: p.c }));
+  for (const p of placed) tags.set(p.key, 'city');
+  return { tags, baseTags, cities };
+}
+
+// Pick 0–1 inland lakes of 1–3 hexes each. Inland = no neighbor is ocean and
+// no neighbor is off-grid (lake hexes can be adjacent to lake hexes only, in
+// addition to land). Seeded by low elevation + high moisture (basin-like).
+function placeLakes(lakeRng, landSet, oceanWater, E, M, rows, cols) {
+  const isOffGrid = (r, c) => r < 0 || r >= rows || c < 0 || c >= cols;
+  // Eligibility for a single lake hex: must be land, no neighbor is ocean or
+  // off-grid. This is the "fully inland" rule.
+  const lakeEligible = (key) => {
+    if (!landSet.has(key)) return false;
+    const [r, c] = key.split(',').map(Number);
+    for (const n of hexNeighbors(r, c)) {
+      if (isOffGrid(n.r, n.c)) return false;
+      if (oceanWater.has(`${n.r},${n.c}`)) return false;
+    }
+    return true;
+  };
+
+  // Score: prefer low E and high M. Also prefer being a local basin (E lower
+  // than at least one neighbor that's also land — i.e. there's higher ground
+  // nearby).
+  const candidates = [];
+  for (const key of landSet) {
+    if (!lakeEligible(key)) continue;
+    const e = E.get(key), m = M.get(key);
+    if (e > 0.45) continue; // must be lowland
+    if (m < 0.55) continue; // must be wet
+    const [r, c] = key.split(',').map(Number);
+    let basin = 0;
+    for (const n of hexNeighbors(r, c)) {
+      const nk = `${n.r},${n.c}`;
+      if (landSet.has(nk) && E.get(nk) > e) basin++;
+    }
+    const score = (1 - e) * 1.2 + m * 1.0 + basin * 0.15 + lakeRng.uniform() * 0.2;
+    candidates.push({ key, r, c, score, e });
+  }
+  if (candidates.length === 0) return new Set();
+  candidates.sort((a, b) => b.score - a.score);
+
+  // Occasionally produce no lake at all even when a candidate exists, so the
+  // 0–1 count truly varies. Bias toward producing when there is a strong
+  // candidate (high score).
+  const top = candidates[0];
+  const formProb = Math.min(0.85, 0.35 + top.score * 0.25);
+  if (lakeRng.uniform() > formProb) return new Set();
+
+  // Grow the lake from the seed by adding 0–2 more hexes from neighbors that
+  // are also lake-eligible and basin-like.
+  const lake = new Set([top.key]);
+  const targetSize = 1 + Math.floor(lakeRng.uniform() * 3); // 1..3
+  let frontier = [top];
+  while (lake.size < targetSize && frontier.length > 0) {
+    // Expand from a random frontier hex.
+    const idx = Math.floor(lakeRng.uniform() * frontier.length);
+    const cur = frontier[idx];
+    frontier.splice(idx, 1);
+    const ncands = [];
+    for (const n of hexNeighbors(cur.r, cur.c)) {
+      const nk = `${n.r},${n.c}`;
+      if (lake.has(nk)) continue;
+      if (!lakeEligible(nk)) continue;
+      // Also forbid: any of n's neighbors is ocean (already enforced by
+      // lakeEligible) — and the resulting lake's perimeter must still be
+      // inland after adding n. lakeEligible(nk) covers that for n itself.
+      const e = E.get(nk), m = M.get(nk);
+      if (e > 0.50 || m < 0.45) continue;
+      ncands.push({ key: nk, r: n.r, c: n.c, e, m });
+    }
+    if (ncands.length === 0) continue;
+    ncands.sort((a, b) => (a.e - b.e) + (b.m - a.m));
+    const pick = ncands[0];
+    lake.add(pick.key);
+    frontier.push(pick);
+  }
+  return lake;
+}
+
+// Find each river endpoint that lands in an inland hex (not ocean, not
+// coast-adjacent, not off-grid). For tributaries that join a parent river,
+// the join end (last point) is skipped — only the source end is a candidate.
+function findRiverTerminusEndpoints(rivers, oceanWater, rows, cols, gridOpts) {
+  const isOffGrid = (r, c) => r < 0 || r >= rows || c < 0 || c >= cols;
+  const out = [];
+  for (let ri = 0; ri < rivers.length; ri++) {
+    const river = rivers[ri];
+    if (!river || !river.points || river.points.length < 2) continue;
+    const pts = river.points;
+    const ends = [{ side: 'start', p: pts[0] }];
+    if (river.parentIndex == null) ends.push({ side: 'end', p: pts[pts.length - 1] });
+    for (const e of ends) {
+      const h = hexAtPoint(e.p.x, e.p.y, gridOpts);
+      if (!h) continue;
+      const k = `${h.r},${h.c}`;
+      if (oceanWater.has(k)) continue;
+      let coastAdj = false;
+      for (const n of hexNeighbors(h.r, h.c)) {
+        if (isOffGrid(n.r, n.c)) { coastAdj = true; break; }
+        if (oceanWater.has(`${n.r},${n.c}`)) { coastAdj = true; break; }
+      }
+      if (coastAdj) continue;
+      out.push({ r: h.r, c: h.c, riverIdx: ri, side: e.side });
+    }
+  }
+  return out;
+}
+
+// Grow a 1–2 hex lake at each inland river endpoint. Hexes already in
+// `existingLake` (scenic lake) or in another terminus lake are skipped.
+function placeTerminusLakes(terminusRng, endpoints, oceanWater, existingLake, rows, cols) {
+  const isOffGrid = (r, c) => r < 0 || r >= rows || c < 0 || c >= cols;
+  const inlandEligible = (r, c) => {
+    for (const n of hexNeighbors(r, c)) {
+      if (isOffGrid(n.r, n.c)) return false;
+      if (oceanWater.has(`${n.r},${n.c}`)) return false;
+    }
+    return true;
+  };
+  const lakes = new Set();
+  for (const ep of endpoints) {
+    const k = `${ep.r},${ep.c}`;
+    if (oceanWater.has(k)) continue;
+    if (existingLake.has(k)) continue;
+    if (lakes.has(k)) continue;
+    if (!inlandEligible(ep.r, ep.c)) continue;
+    lakes.add(k);
+    // 50% chance to grow to 2 hexes, if a neighbor is also fully inland.
+    if (terminusRng.uniform() < 0.5) {
+      const ncands = [];
+      for (const n of hexNeighbors(ep.r, ep.c)) {
+        const nk = `${n.r},${n.c}`;
+        if (oceanWater.has(nk)) continue;
+        if (existingLake.has(nk)) continue;
+        if (lakes.has(nk)) continue;
+        if (!inlandEligible(n.r, n.c)) continue;
+        ncands.push(nk);
+      }
+      if (ncands.length > 0) {
+        const pick = ncands[Math.floor(terminusRng.uniform() * ncands.length)];
+        lakes.add(pick);
+      }
+    }
+  }
+  return lakes;
+}
+
+// Pick up to 3 ponds: single sub-hex water features inside land hexes. Don't
+// remove their hex from the land set — they are decorative. Avoid hexes that
+// already have river, lake, city, or are at the coast, and keep them apart.
+function placePonds(pondRng, landSet, lakeWater, tags, riverHexes, isCoastAdj, E, M) {
+  const candidates = [];
+  for (const key of landSet) {
+    if (lakeWater.has(key)) continue;
+    const t = tags.get(key);
+    if (t === 'city' || t === 'mountains' || t === 'hills') continue;
+    if (riverHexes.has(key)) continue;
+    const [r, c] = key.split(',').map(Number);
+    if (isCoastAdj(r, c)) continue;
+    const e = E.get(key), m = M.get(key);
+    if (m < 0.45) continue;
+    if (e > 0.55) continue;
+    const score = m * 1.2 + (1 - e) * 0.6 + pondRng.uniform() * 0.4;
+    candidates.push({ key, r, c, score });
+  }
+  candidates.sort((a, b) => b.score - a.score);
+  const Nmax = 3;
+  // Probability per available slot — typically 0–3 ponds.
+  const placed = [];
+  for (const cand of candidates) {
+    if (placed.length >= Nmax) break;
+    let ok = true;
+    for (const p of placed) {
+      if (hexCubeDistance(cand.r, cand.c, p.r, p.c) < 3) { ok = false; break; }
+    }
+    if (!ok) continue;
+    // Each candidate has ~55% chance of becoming a pond (decaying so we don't
+    // always max out).
+    const accept = 0.55 - placed.length * 0.12;
+    if (pondRng.uniform() > accept) continue;
+    placed.push(cand);
+  }
+  return placed.map(p => ({ r: p.r, c: p.c }));
+}
+
+// Draw a small irregular pond inside a hex: a wobbly closed outline plus 1–2
+// concentric wave rings inside. Stroke only (no fill) to match the parchment
+// ink aesthetic.
+function drawPonds(canvas, ponds, opts = {}) {
+  if (!ponds || ponds.length === 0) return;
+  const ctx = canvas.getContext('2d');
+  const scale = opts.scale ?? 1;
+  const seed = opts.seed ?? 0;
+  const lineColor = opts.lineColor ?? '#2a2015';
+  ctx.strokeStyle = lineColor;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  for (let pi = 0; pi < ponds.length; pi++) {
+    const p = ponds[pi];
+    const center = hexCenter(p.r, p.c, opts);
+    const rng = createRng(((seed + pi * 0x9e3779b1) ^ 0x70AD0001) >>> 0);
+    // Pond outline: irregular blob, radius ~30% of hex size.
+    const baseR = HEX_SIZE * (0.26 + rng.uniform() * 0.08);
+    const N = 24;
+    const radii = new Array(N);
+    for (let i = 0; i < N; i++) radii[i] = rng.normal();
+    const sm = gaussianFilter1D(radii, 2.5);
+    // Wrap-around smoothing pass so the loop closes seamlessly.
+    const wrapped = sm.slice();
+    for (let i = 0; i < N; i++) {
+      wrapped[i] = (sm[i] + sm[(i + N - 1) % N] + sm[(i + 1) % N]) / 3;
+    }
+    const pts = [];
+    for (let i = 0; i < N; i++) {
+      const ang = (i / N) * Math.PI * 2;
+      const r = baseR * (1.0 + wrapped[i] * 0.18);
+      pts.push({
+        x: center.x + Math.cos(ang) * r,
+        y: center.y + Math.sin(ang) * r * 0.78, // slight vertical squish
+      });
+    }
+    // Outline
+    ctx.lineWidth = Math.max(1, 1.7 * scale);
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x * scale, pts[0].y * scale);
+    for (let i = 1; i < N; i++) ctx.lineTo(pts[i].x * scale, pts[i].y * scale);
+    ctx.closePath();
+    ctx.stroke();
+
+    // 1–2 interior wave rings, shrunk toward the centroid.
+    const rings = 1 + (rng.uniform() < 0.55 ? 1 : 0);
+    for (let k = 0; k < rings; k++) {
+      const shrink = 0.55 - k * 0.22;
+      ctx.lineWidth = Math.max(0.5, 1.1 * scale);
+      ctx.beginPath();
+      const dashLen = 6, gapLen = 4;
+      let drawing = false, acc = 0;
+      let mode = 'dash';
+      for (let i = 0; i <= N; i++) {
+        const idx = i % N;
+        const px = center.x + (pts[idx].x - center.x) * shrink;
+        const py = center.y + (pts[idx].y - center.y) * shrink;
+        if (mode === 'dash') {
+          if (!drawing) { ctx.moveTo(px * scale, py * scale); drawing = true; }
+          else ctx.lineTo(px * scale, py * scale);
+          acc++;
+          if (acc >= dashLen) { acc = 0; mode = 'gap'; }
+        } else {
+          drawing = false;
+          acc++;
+          if (acc >= gapLen) { acc = 0; mode = 'dash'; }
+        }
+      }
+      ctx.stroke();
+    }
+  }
+}
+
+// ============================================================
+// MOUNTAINS
+// ============================================================
+// Draw a single hand-drawn mountain peak: fill (parchment-colored, to occlude
+// anything behind it) plus a thick curved outline and hash-mark shading down
+// the LEFT slope (matching the reference's one-sided shading).
+function drawMountainPeak(ctx, peak, rng, fillColor, lineColor) {
+  const { x, y, width, height } = peak;
+  const apexX = x;
+  const apexY = y - height * 0.55;
+  const baseY = y + height * 0.45;
+  const leftBaseX = x - width * 0.5;
+  const rightBaseX = x + width * 0.5;
+
+  // Bezier control points for each slope (gentle outward curve).
+  const lc1x = apexX - width * 0.06;
+  const lc1y = apexY + height * 0.20;
+  const lc2x = leftBaseX + width * 0.04;
+  const lc2y = baseY - height * 0.12;
+  const rc1x = apexX + width * 0.06;
+  const rc1y = apexY + height * 0.20;
+  const rc2x = rightBaseX - width * 0.04;
+  const rc2y = baseY - height * 0.12;
+
+  // Fill silhouette with parchment color so this peak occludes everything
+  // behind it (other peaks, rivers, grid lines).
+  ctx.beginPath();
+  ctx.moveTo(leftBaseX, baseY);
+  ctx.bezierCurveTo(lc2x, lc2y, lc1x, lc1y, apexX, apexY);
+  ctx.bezierCurveTo(rc1x, rc1y, rc2x, rc2y, rightBaseX, baseY);
+  ctx.closePath();
+  ctx.fillStyle = fillColor;
+  ctx.fill();
+
+  // Outline.
+  ctx.strokeStyle = lineColor;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = Math.max(1.4, Math.min(3.2, height * 0.05));
+  ctx.beginPath();
+  ctx.moveTo(leftBaseX, baseY);
+  ctx.bezierCurveTo(lc2x, lc2y, lc1x, lc1y, apexX, apexY);
+  ctx.bezierCurveTo(rc1x, rc1y, rc2x, rc2y, rightBaseX, baseY);
+  ctx.stroke();
+
+  // Hash-mark shading on the LEFT slope, pointing INWARD into the peak body.
+  ctx.lineWidth = Math.max(0.9, Math.min(2.0, height * 0.03));
+  const ticks = 4 + (rng.uniform() < 0.5 ? 0 : 1);
+  const p0x = apexX, p0y = apexY;
+  const p1x = lc1x, p1y = lc1y;
+  const p2x = lc2x, p2y = lc2y;
+  const p3x = leftBaseX, p3y = baseY;
+  for (let i = 0; i < ticks; i++) {
+    const t = 0.22 + (i / Math.max(1, ticks - 1)) * 0.62;
+    const mt = 1 - t;
+    const bx = mt*mt*mt*p0x + 3*mt*mt*t*p1x + 3*mt*t*t*p2x + t*t*t*p3x;
+    const by = mt*mt*mt*p0y + 3*mt*mt*t*p1y + 3*mt*t*t*p2y + t*t*t*p3y;
+    const tx = 3*mt*mt*(p1x-p0x) + 6*mt*t*(p2x-p1x) + 3*t*t*(p3x-p2x);
+    const ty = 3*mt*mt*(p1y-p0y) + 6*mt*t*(p2y-p1y) + 3*t*t*(p3y-p2y);
+    const tlen = Math.hypot(tx, ty) || 1;
+    const nx = ty / tlen;
+    const ny = -tx / tlen;
+    const tiltX = nx * 0.78;
+    const tiltY = ny * 0.78 + 0.55;
+    const tlen2 = Math.hypot(tiltX, tiltY) || 1;
+    const tickLen = height * (0.10 + t * 0.18) * (0.85 + rng.uniform() * 0.3);
+    const ex = bx + (tiltX / tlen2) * tickLen;
+    const ey = by + (tiltY / tlen2) * tickLen;
+    ctx.beginPath();
+    ctx.moveTo(bx, by);
+    ctx.lineTo(ex, ey);
+    ctx.stroke();
+  }
+}
+
+// Draw mountain peaks across all mountain-biome hexes. Each hex gets 1–7
+// peaks at random positions within the hex, with varying sizes. Peaks
+// overflow their hex and occlude each other (and anything behind them) via a
+// parchment-colored fill. Must be drawn AFTER the ink threshold pass so the
+// fill survives onto the parchment output.
+function drawMountains(canvas, mountainHexes, opts = {}) {
+  if (!mountainHexes || mountainHexes.length === 0) return;
+  const ctx = canvas.getContext('2d');
+  const seed = opts.seed ?? 0;
+  const fillColor = opts.fillColor ?? '#e8d5b7';
+  const lineColor = opts.lineColor ?? '#2a2015';
+
+  const peaks = [];
+  for (const h of mountainHexes) {
+    const center = hexCenter(h.r, h.c, opts);
+    const rng = createRng((((seed + h.r * 73856093) ^ (h.c * 19349663)) ^ 0x4E54C0DE) >>> 0);
+    // 1–7 peaks per hex.
+    const N = 1 + Math.floor(rng.uniform() * 7);
+    for (let i = 0; i < N; i++) {
+      // Random offset within the hex inradius.
+      const ang = rng.uniform() * Math.PI * 2;
+      const rad = Math.sqrt(rng.uniform()) * HEX_SIZE * 0.55;
+      const px = center.x + Math.cos(ang) * rad;
+      const py = center.y + Math.sin(ang) * rad;
+      // Varying sizes — wide range from small foothills to dominant peaks.
+      const sizeT = rng.uniform();
+      const width = HEX_SIZE * (0.40 + sizeT * 0.70);
+      const height = HEX_SIZE * (0.55 + sizeT * 0.95) * (0.9 + rng.uniform() * 0.25);
+      peaks.push({ x: px, y: py, width, height, rng });
+    }
+  }
+  // Back-to-front: peaks with a higher base Y are nearer to the viewer and
+  // drawn last so their fill occludes peaks behind them.
+  peaks.sort((a, b) => (a.y + a.height * 0.45) - (b.y + b.height * 0.45));
+  for (const p of peaks) drawMountainPeak(ctx, p, p.rng, fillColor, lineColor);
+}
+
+// ============================================================
 // HEX GRID RENDERER
 // ============================================================
 function hexStrokeAlpha(fade, cx, cy, canvasW, canvasH) {
@@ -1136,10 +1878,39 @@ function paintParchment(canvas, opts = {}) {
 // transparent hi-res buffer, threshold to a binary mask, then composite
 // over the parchment so the texture survives.
 // ============================================================
+const MIN_GRID = 6;
+const MAX_GRID = 50;
+
+function gridCanvasSize(rows, cols, originX, originY) {
+  // Match the default 7x11 layout's margins: left=originX, top=originY,
+  // right=100, bottom=12. Rightmost hex extent assumes at least one odd row
+  // (true for rows >= 2), which is guaranteed since MIN_GRID is 6.
+  const rightExtent = originX + (cols - 1) * HEX_W + HEX_W;
+  const bottomExtent = originY + (rows - 1) * 0.75 * HEX_H + HEX_H / 2;
+  return { W: Math.ceil(rightExtent + 100), H: Math.ceil(bottomExtent + 12) };
+}
+
 function renderMap(opts = {}) {
-  const W = opts.width ?? 928;
-  const H = opts.height ?? 946;
-  const S = opts.supersample ?? 8;
+  const rows = opts.rows ?? DEFAULT_ROWS;
+  const cols = opts.cols ?? DEFAULT_COLS;
+  if (rows < MIN_GRID || rows > MAX_GRID || cols < MIN_GRID || cols > MAX_GRID) {
+    throw new Error(`rows/cols must be in [${MIN_GRID}, ${MAX_GRID}] (got rows=${rows}, cols=${cols})`);
+  }
+  const originX = opts.originX ?? DEFAULT_GRID_ORIGIN_X;
+  const originY = opts.originY ?? DEFAULT_GRID_ORIGIN_Y;
+  const auto = gridCanvasSize(rows, cols, originX, originY);
+  const W = opts.width ?? auto.W;
+  const H = opts.height ?? auto.H;
+  const gridOpts = { rows, cols, originX, originY };
+  // node-canvas caps any dimension at 32767 px, and getImageData uses a
+  // Buffer whose length must fit in a signed 32-bit int (<2^31 bytes).
+  // Scale supersample down so the hi-res buffer fits both limits.
+  const CANVAS_DIM_MAX = 32767;
+  const BUFFER_MAX = 2147483647;
+  const maxByDim = Math.floor(CANVAS_DIM_MAX / Math.max(W, H));
+  const maxByBuf = Math.floor(Math.sqrt(BUFFER_MAX / (W * H * 4)));
+  const maxS = Math.max(1, Math.min(maxByDim, maxByBuf));
+  const S = Math.min(opts.supersample ?? 8, maxS);
   const seed = opts.seed ?? 42;
   const drawGrid = opts.drawGrid ?? true;
   const drawOceanFlag = opts.drawOcean ?? true;
@@ -1162,26 +1933,214 @@ function renderMap(opts = {}) {
 
   let sel;
   let oceanInfo = null;
-  let riverCl = null;
+  let rivers = [];
   if (drawOceanFlag) {
     const oceanRng = createRng((seed * 0x85ebca6b) >>> 0 ^ 0xc2b2ae35);
     const sides = pickSides(oceanRng, sidesOverride);
-    sel = selectWaterHexes(oceanRng, sides, oceanParams);
-    oceanInfo = { sides, waterCount: sel.water.size, waterFraction: sel.water.size / (DEFAULT_ROWS * DEFAULT_COLS) };
+    sel = selectWaterHexes(oceanRng, sides, { ...oceanParams, ...gridOpts });
+    oceanInfo = { sides, waterCount: sel.water.size, waterFraction: sel.water.size / (rows * cols) };
   }
+  // Ocean-only water set. `sel.water` is later expanded to ocean+lakes for
+  // downstream coast/grid/river-clip drawing, but river trim and lake
+  // placement need the pre-lake (ocean-only) snapshot.
+  const oceanWater = sel ? new Set(sel.water) : new Set();
 
-  // Generate river first so we can clip the coastline where it meets the river
+  // Generate rivers first so we can clip the coastline where they meet the river
   let riverInfo = null;
   if (drawRiverFlag) {
-    riverCl = hexEdgeCenterline(seed, riverPathOpts);
-    riverInfo = { reached: riverCl.reached, length: riverCl.points.length };
+    rivers = generateRivers(seed, { ...riverPathOpts, ...gridOpts });
+    riverInfo = {
+      count: rivers.length,
+      reached: rivers[0]?.reached ?? false,
+      lengths: rivers.map(r => r.points.length),
+    };
   }
 
-  // Pre-build the coast polylines so river trimming and the ocean renderer
-  // share the exact same wavy coast geometry.
-  let coastPolylines = null;
+  // Pre-build the OCEAN coast polylines so river trimming uses the ocean
+  // outline for "near coast" mouth detection. After lakes are placed below
+  // we rebuild a combined ocean+lake coast for the actual draw.
+  let oceanCoastPolylines = null;
   if (drawOceanFlag && sel) {
-    const segs = buildCoastlineSegments(sel.water, oceanParams);
+    const segs = buildCoastlineSegments(oceanWater, { ...oceanParams, ...gridOpts });
+    if (segs.length > 0) {
+      const chs = stitchSegments(segs);
+      const polyRng = createRng((seed * 0x9E3779B1) >>> 0 ^ 0x517cc1b7);
+      oceanCoastPolylines = buildCoastPolylines(chs, polyRng, {
+        amp: oceanParams.wiggleAmp ?? 5.5,
+        samples: oceanParams.samples ?? 6,
+      });
+    }
+  }
+  let coastPolylines = oceanCoastPolylines;
+
+  // Per-river: trim to land run, collect mouth points, build bank polygon.
+  // Tributaries that never touch the ocean trim into a no-op and produce no
+  // mouth points, which is exactly what we want. Bank polygons are computed
+  // for every river — they're used both for coast clipping (ocean) and for
+  // clipping child tributaries at the junction with their parent.
+  const allMouthPoints = [];
+  if (drawRiverFlag && rivers.length > 0) {
+    const isOceanXY = (drawOceanFlag && sel)
+      ? (x, y) => {
+          const h = hexAtPoint(x, y, { ...oceanParams, ...gridOpts });
+          if (h === null) return true;
+          return sel.water.has(`${h.r},${h.c}`);
+        }
+      : null;
+    const bandRadius = 5;
+    const nearCoast = 22;
+    const near2 = nearCoast * nearCoast;
+    const isNearCoast = (p) => {
+      if (!coastPolylines) return true;
+      for (const poly of coastPolylines) {
+        for (let j = 0; j < poly.length; j++) {
+          const dx = poly[j].x - p.x, dy = poly[j].y - p.y;
+          if (dx * dx + dy * dy < near2) return true;
+        }
+      }
+      return false;
+    };
+
+    for (let ri = 0; ri < rivers.length; ri++) {
+      let river = rivers[ri];
+      if (!river || river.points.length === 0) continue;
+
+      if (isOceanXY) {
+        const pts = river.points;
+        let bestStart = -1, bestEnd = -1, bestLen = 0;
+        let curStart = -1;
+        for (let i = 0; i < pts.length; i++) {
+          const land = !isOceanXY(pts[i].x, pts[i].y);
+          if (land) {
+            if (curStart === -1) curStart = i;
+            const len = i - curStart + 1;
+            if (len > bestLen) { bestLen = len; bestStart = curStart; bestEnd = i; }
+          } else {
+            curStart = -1;
+          }
+        }
+        if (bestStart < 0) { rivers[ri] = { ...river, points: [] }; continue; }
+        const startIdx = Math.max(0, bestStart - 1);
+        const endIdx = Math.min(pts.length - 1, bestEnd + 1);
+        let trimmed = pts.slice(startIdx, endIdx + 1);
+        const OCEAN_OVERSHOOT = 24;
+        if (startIdx < bestStart && trimmed.length >= 2) {
+          const a = trimmed[0], b = trimmed[1];
+          const dx = a.x - b.x, dy = a.y - b.y;
+          const L = Math.max(Math.hypot(dx, dy), 1e-6);
+          trimmed.unshift({ x: a.x + dx / L * OCEAN_OVERSHOOT, y: a.y + dy / L * OCEAN_OVERSHOOT });
+        }
+        if (endIdx > bestEnd && trimmed.length >= 2) {
+          const a = trimmed[trimmed.length - 1], b = trimmed[trimmed.length - 2];
+          const dx = a.x - b.x, dy = a.y - b.y;
+          const L = Math.max(Math.hypot(dx, dy), 1e-6);
+          trimmed.push({ x: a.x + dx / L * OCEAN_OVERSHOOT, y: a.y + dy / L * OCEAN_OVERSHOOT });
+        }
+        river = { ...river, points: trimmed };
+        rivers[ri] = river;
+
+        const addBand = (centerIdx) => {
+          const lo = Math.max(0, centerIdx - bandRadius);
+          const hi = Math.min(pts.length - 1, centerIdx + bandRadius);
+          for (let i = lo; i <= hi; i++) {
+            if (isNearCoast(pts[i])) allMouthPoints.push({ x: pts[i].x, y: pts[i].y });
+          }
+        };
+        if (startIdx < bestStart) addBand(bestStart);
+        if (endIdx > bestEnd) addBand(bestEnd);
+      }
+
+    }
+  }
+  // Bank / water polygons are built later, after terminus lakes are placed
+  // (so the river can be overshoot-extended into them like it is into ocean).
+
+  // ------------------------------------------------------------
+  // Biomes, lakes, ponds
+  // ------------------------------------------------------------
+  // Land set as seen *before* lake placement (ocean removed only).
+  const landSetPre = new Set();
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const k = `${r},${c}`;
+      if (!oceanWater.has(k)) landSetPre.add(k);
+    }
+  }
+  // Hexes the river passes through, computed from the *trimmed* river points.
+  const riverHexes = riverHexSet(rivers, oceanWater, gridOpts);
+  // Biome RNG — distinct stream from ocean/river/poly, per BIOMES.md §1.
+  const biomeRng = createRng(((seed * 0xB5297A4D) >>> 0) ^ 0x68E31DA4);
+  const preFields = computeScalarFields(biomeRng, landSetPre, oceanWater, riverHexes, rows, cols);
+  const { E, M } = preFields;
+
+  // Lake placement uses its own RNG so it doesn't perturb biomeRng state used
+  // for city tie-breaking below.
+  const lakeRng = createRng(((seed * 0x4A39E9B1) >>> 0) ^ 0x1A4E7777);
+  const scenicLake = (landSetPre.size > 0)
+    ? placeLakes(lakeRng, landSetPre, oceanWater, E, M, rows, cols)
+    : new Set();
+  // Terminus lakes: any inland river endpoint (not joined to a parent, not
+  // ocean/coast-adjacent) gets a 1–2 hex lake. Separate budget from scenic.
+  const terminusRng = createRng(((seed * 0x73E2C1A1) >>> 0) ^ 0x5E114AC0);
+  const termEndpoints = drawRiverFlag
+    ? findRiverTerminusEndpoints(rivers, oceanWater, rows, cols, gridOpts)
+    : [];
+  const terminusLake = placeTerminusLakes(terminusRng, termEndpoints, oceanWater, scenicLake, rows, cols);
+  const lakeWater = new Set([...scenicLake, ...terminusLake]);
+
+  // For each river endpoint that actually became a terminus lake hex, extend
+  // the river's centerline by a short overshoot *into* the lake. This mirrors
+  // the OCEAN_OVERSHOOT logic and ensures the river's bank polygon reaches the
+  // lake's wavy coastline (otherwise the bank caps short of the hex boundary
+  // and a small gap appears between the river and the lake coast).
+  if (drawRiverFlag && terminusLake.size > 0) {
+    const LAKE_OVERSHOOT = 24;
+    for (const ep of termEndpoints) {
+      const k = `${ep.r},${ep.c}`;
+      if (!terminusLake.has(k)) continue;
+      const river = rivers[ep.riverIdx];
+      if (!river || !river.points || river.points.length < 2) continue;
+      const pts = river.points;
+      if (ep.side === 'start') {
+        const a = pts[0], b = pts[1];
+        const dx = a.x - b.x, dy = a.y - b.y;
+        const L = Math.max(Math.hypot(dx, dy), 1e-6);
+        pts.unshift({ x: a.x + dx / L * LAKE_OVERSHOOT, y: a.y + dy / L * LAKE_OVERSHOOT });
+      } else {
+        const a = pts[pts.length - 1], b = pts[pts.length - 2];
+        const dx = a.x - b.x, dy = a.y - b.y;
+        const L = Math.max(Math.hypot(dx, dy), 1e-6);
+        pts.push({ x: a.x + dx / L * LAKE_OVERSHOOT, y: a.y + dy / L * LAKE_OVERSHOOT });
+      }
+    }
+  }
+
+  // Build bank/water polygons for every river now that all overshoots are in.
+  const bankByIndex = new Array(rivers.length).fill(null);
+  const waterByIndex = new Array(rivers.length).fill(null);
+  if (drawRiverFlag) {
+    for (let ri = 0; ri < rivers.length; ri++) {
+      const river = rivers[ri];
+      if (!river || !river.points || river.points.length < 2) continue;
+      const geom = computeRiverGeometry(
+        river.points,
+        { ...riverParams },
+        createRng((seed + ri * 0x9e3779b1) >>> 0),
+      );
+      bankByIndex[ri] = riverBankPolygon(geom);
+      waterByIndex[ri] = riverWaterPolygon(geom);
+    }
+  }
+  const allBankPolygons = bankByIndex.filter(b => b !== null);
+
+  // Merge ocean + lake water for downstream coast/grid/river-clip drawing.
+  const allWater = new Set([...oceanWater, ...lakeWater]);
+  if (sel) sel.water = allWater;
+
+  // Rebuild coast polylines from the combined water set so lakes get the same
+  // coastline + wave-ring treatment as the ocean.
+  if (lakeWater.size > 0 && drawOceanFlag) {
+    const segs = buildCoastlineSegments(allWater, { ...oceanParams, ...gridOpts });
     if (segs.length > 0) {
       const chs = stitchSegments(segs);
       const polyRng = createRng((seed * 0x9E3779B1) >>> 0 ^ 0x517cc1b7);
@@ -1192,121 +2151,104 @@ function renderMap(opts = {}) {
     }
   }
 
-  // Trim the river to its single longest contiguous on-land run, and pull
-  // out the actual mouth crossing points. Without this, a river that dips
-  // out into ocean and back can render as two disconnected land chunks
-  // (a "loop back into land"), and the coast clipping cuts the wrong place.
-  let mouthPoints = null;
-  if (drawOceanFlag && sel && riverCl && riverCl.points.length > 0) {
-    const isOceanXY = (x, y) => {
-      const h = hexAtPoint(x, y, oceanParams);
-      if (h === null) return true;
-      return sel.water.has(`${h.r},${h.c}`);
-    };
-    const pts = riverCl.points;
-    // Find longest contiguous land run.
-    let bestStart = -1, bestEnd = -1, bestLen = 0;
-    let curStart = -1;
-    for (let i = 0; i < pts.length; i++) {
-      const land = !isOceanXY(pts[i].x, pts[i].y);
-      if (land) {
-        if (curStart === -1) curStart = i;
-        const len = i - curStart + 1;
-        if (len > bestLen) { bestLen = len; bestStart = curStart; bestEnd = i; }
-      } else {
-        curStart = -1;
-      }
-    }
-    if (bestStart >= 0) {
-      // Include one ocean point at each end (if any) so the river reaches the coast.
-      const startIdx = Math.max(0, bestStart - 1);
-      const endIdx = Math.min(pts.length - 1, bestEnd + 1);
-      let trimmed = pts.slice(startIdx, endIdx + 1);
-      // Extrapolate each ocean-side end along its tangent so the bank
-      // polygon overshoots the wavy coast. The river-clip path then cuts
-      // the bank exactly at the visible coastline (no thin gap between
-      // bank cap and coast where the wiggle pushes farther into ocean
-      // than one hex-edge offset).
-      const OCEAN_OVERSHOOT = 24;
-      if (startIdx < bestStart && trimmed.length >= 2) {
-        const a = trimmed[0], b = trimmed[1];
-        const dx = a.x - b.x, dy = a.y - b.y;
-        const L = Math.max(Math.hypot(dx, dy), 1e-6);
-        trimmed.unshift({ x: a.x + dx / L * OCEAN_OVERSHOOT, y: a.y + dy / L * OCEAN_OVERSHOOT });
-      }
-      if (endIdx > bestEnd && trimmed.length >= 2) {
-        const a = trimmed[trimmed.length - 1], b = trimmed[trimmed.length - 2];
-        const dx = a.x - b.x, dy = a.y - b.y;
-        const L = Math.max(Math.hypot(dx, dy), 1e-6);
-        trimmed.push({ x: a.x + dx / L * OCEAN_OVERSHOOT, y: a.y + dy / L * OCEAN_OVERSHOOT });
-      }
-      riverCl = { ...riverCl, points: trimmed };
-      // Mouth clip points: river points near each crossing — but only those
-      // that are actually within `nearCoast` of the coast polyline, so inland
-      // points (which happen to pass near other coast sections) don't cause
-      // stray gaps far from the river mouth.
-      const bandRadius = 5;
-      const nearCoast = 22;
-      const near2 = nearCoast * nearCoast;
-      const isNearCoast = (p) => {
-        if (!coastPolylines) return true;
-        for (const poly of coastPolylines) {
-          for (let j = 0; j < poly.length; j++) {
-            const dx = poly[j].x - p.x, dy = poly[j].y - p.y;
-            if (dx * dx + dy * dy < near2) return true;
+  // For each lake-hex transition along a river, add mouth points so the wave
+  // rings around the lake open up where the river enters/exits.
+  if (lakeWater.size > 0 && drawRiverFlag && rivers.length > 0) {
+    for (const river of rivers) {
+      if (!river || !river.points || river.points.length < 2) continue;
+      const pts = river.points;
+      let prevInLake = null;
+      for (let i = 0; i < pts.length; i++) {
+        const h = hexAtPoint(pts[i].x, pts[i].y, gridOpts);
+        const inLake = h ? lakeWater.has(`${h.r},${h.c}`) : false;
+        if (prevInLake !== null && prevInLake !== inLake) {
+          // Boundary crossing — add a short band of mouth points around it.
+          const lo = Math.max(0, i - 3);
+          const hi = Math.min(pts.length - 1, i + 3);
+          for (let j = lo; j <= hi; j++) {
+            allMouthPoints.push({ x: pts[j].x, y: pts[j].y });
           }
         }
-        return false;
-      };
-      mouthPoints = [];
-      const addBand = (centerIdx) => {
-        const lo = Math.max(0, centerIdx - bandRadius);
-        const hi = Math.min(pts.length - 1, centerIdx + bandRadius);
-        for (let i = lo; i <= hi; i++) {
-          if (isNearCoast(pts[i])) mouthPoints.push({ x: pts[i].x, y: pts[i].y });
-        }
-      };
-      if (startIdx < bestStart) addBand(bestStart);
-      if (endIdx > bestEnd) addBand(bestEnd);
-    } else {
-      riverCl = { ...riverCl, points: [] };
-      mouthPoints = null;
+        prevInLake = inLake;
+      }
     }
   }
 
-  // Build the river bank polygon (outer-upper bank → reversed outer-lower
-  // bank) so the coast renderer can clip the coastline exactly where the
-  // banks cross it — making the banks merge into the coastline at the mouth.
-  let bankPolygon = null;
-  if (drawOceanFlag && sel && riverCl && riverCl.points.length >= 2) {
-    const geom = computeRiverGeometry(
-      riverCl.points,
-      { ...riverParams },
-      createRng(seed),
-    );
-    bankPolygon = riverBankPolygon(geom);
+  // Final biome classification on land-minus-lakes, using E/M restricted to
+  // the final land set. Adjacency now considers lakes as coast (so swamps
+  // can form next to lakes and cities get the river/coast desirability bump).
+  const landSetFinal = new Set();
+  for (const k of landSetPre) if (!lakeWater.has(k)) landSetFinal.add(k);
+  const isOffGrid = (r, c) => r < 0 || r >= rows || c < 0 || c >= cols;
+  const isCoastAdjAll = (r, c) => {
+    for (const n of hexNeighbors(r, c)) {
+      if (isOffGrid(n.r, n.c)) return true;
+      if (allWater.has(`${n.r},${n.c}`)) return true;
+    }
+    return false;
+  };
+  const isRiverAdjAll = (r, c) => {
+    if (riverHexes.has(`${r},${c}`)) return true;
+    for (const n of hexNeighbors(r, c)) {
+      if (riverHexes.has(`${n.r},${n.c}`)) return true;
+    }
+    return false;
+  };
+  // Restrict E/M to the final land set.
+  const Efinal = new Map();
+  const Mfinal = new Map();
+  for (const k of landSetFinal) {
+    Efinal.set(k, E.get(k));
+    Mfinal.set(k, M.get(k));
   }
+  const biomesOut = classifyBiomes(biomeRng, landSetFinal, Efinal, Mfinal, isCoastAdjAll, isRiverAdjAll);
+
+  // Pond placement.
+  const pondRng = createRng(((seed * 0x6B5F2391) >>> 0) ^ 0x504E4242);
+  const ponds = placePonds(pondRng, landSetFinal, lakeWater, biomesOut.tags, riverHexes, isCoastAdjAll, Efinal, Mfinal);
+
+  const biomesInfo = {
+    tags: biomesOut.tags,
+    baseTags: biomesOut.baseTags,
+    cities: biomesOut.cities,
+    fields: { elevation: Efinal, moisture: Mfinal },
+  };
+  const lakesInfo = {
+    hexes: [...lakeWater].map(k => {
+      const [r, c] = k.split(',').map(Number);
+      return { r, c };
+    }),
+    scenic: [...scenicLake].map(k => {
+      const [r, c] = k.split(',').map(Number);
+      return { r, c };
+    }),
+    terminus: [...terminusLake].map(k => {
+      const [r, c] = k.split(',').map(Number);
+      return { r, c };
+    }),
+  };
+  const pondsInfo = { hexes: ponds };
 
   // Draw ocean (coast + waves) — coast and waves both rendered now;
-  // river is drawn after and clipped to land hex polygons.
+  // rivers are drawn after and clipped to land hex polygons.
   if (drawOceanFlag && sel) {
     drawOcean(hi, sel.water, oceanInfo.sides, {
-      ...oceanParams, seed, scale: S,
+      ...oceanParams, ...gridOpts, seed, scale: S,
       waveCanvas: out, waveScale: 1,
-      riverPoints: mouthPoints,
-      riverBankPolygon: bankPolygon,
+      riverPoints: allMouthPoints.length ? allMouthPoints : null,
+      riverBankPolygons: allBankPolygons.length ? allBankPolygons : null,
       prebuiltPolylines: coastPolylines,
     });
   } else if (drawOceanFlag) {
     drawOcean(hi, sel.water, oceanInfo.sides, {
-      ...oceanParams, seed, scale: S,
+      ...oceanParams, ...gridOpts, seed, scale: S,
       waveCanvas: out, waveScale: 1,
     });
   }
 
   if (drawGrid) {
     drawHexGrid(hi, {
-      ...gridParams, scale: S,
+      ...gridParams, ...gridOpts, scale: S,
       water: sel ? sel.water : null,
       oceanAlpha: oceanGridOpacity,
       oceanCanvas: out,
@@ -1314,48 +2256,101 @@ function renderMap(opts = {}) {
     });
   }
 
-  // Draw river clipped to land hexes
-  if (drawRiverFlag && riverCl && riverCl.points.length >= 2) {
-    if (drawOceanFlag && sel) {
-      hiCtx.save();
-      hiCtx.beginPath();
-      for (let r = 0; r < DEFAULT_ROWS; r++) {
-        for (let c = 0; c < DEFAULT_COLS; c++) {
-          if (!sel.water.has(`${r},${c}`)) {
-            const center = hexCenter(r, c, { rows: DEFAULT_ROWS, cols: DEFAULT_COLS });
-            const verts = hexVertices(center.x, center.y, HEX_SIZE);
-            hiCtx.moveTo(verts[0].x * S, verts[0].y * S);
-            for (let v = 1; v < 6; v++) hiCtx.lineTo(verts[v].x * S, verts[v].y * S);
-            hiCtx.closePath();
-          }
+  // Draw rivers. Each river's clip = land-hex region (with coast wiggle) MINUS
+  // its parent's bank polygon. The minus is done by adding the parent polygon
+  // to the same path and clipping with 'evenodd' — overlap flips out of the
+  // clip. On landlocked maps we substitute the canvas rect as the base region.
+  const addLandClipPath = () => {
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (!sel.water.has(`${r},${c}`)) {
+          const center = hexCenter(r, c, gridOpts);
+          const verts = hexVertices(center.x, center.y, HEX_SIZE);
+          hiCtx.moveTo(verts[0].x * S, verts[0].y * S);
+          for (let v = 1; v < 6; v++) hiCtx.lineTo(verts[v].x * S, verts[v].y * S);
+          hiCtx.closePath();
         }
       }
-      // Adjust the straight-hex-edge clip to follow the wavy coast.
-      // Each polyline segment between two hex-vertex anchors (every
-      // `samples` polyline points) plus the straight line back forms a
-      // closed wiggle region. With evenodd fill, these XOR against the
-      // hex polygons: wiggle-into-ocean is added (count 0→1) and
-      // wiggle-into-land is subtracted (count 1→2). The result is a
-      // clip whose boundary matches the visible coastline exactly, so
-      // river banks no longer protrude past the wavy coast.
-      if (coastPolylines) {
-        const samples = (oceanParams.samples ?? 6);
-        for (const poly of coastPolylines) {
-          for (let i = 0; i + samples < poly.length; i += samples) {
-            hiCtx.moveTo(poly[i].x * S, poly[i].y * S);
-            for (let j = i + 1; j <= i + samples; j++) {
-              hiCtx.lineTo(poly[j].x * S, poly[j].y * S);
-            }
-            hiCtx.closePath();
-          }
-        }
-      }
-      hiCtx.clip('evenodd');
-      drawRiver(hi, riverCl.points, { ...riverParams, seed, scale: S });
-      hiCtx.restore();
-    } else {
-      drawRiver(hi, riverCl.points, { ...riverParams, seed, scale: S });
     }
+    if (coastPolylines) {
+      const samples = (oceanParams.samples ?? 6);
+      for (const poly of coastPolylines) {
+        for (let i = 0; i + samples < poly.length; i += samples) {
+          hiCtx.moveTo(poly[i].x * S, poly[i].y * S);
+          for (let j = i + 1; j <= i + samples; j++) {
+            hiCtx.lineTo(poly[j].x * S, poly[j].y * S);
+          }
+          hiCtx.closePath();
+        }
+      }
+    }
+  };
+
+  // Per-river: children of this river (anyone who T-junctioned into it).
+  // A child's bank polygon is subtracted from its parent's draw region so the
+  // child's water punches a notch through the parent's bank at the mouth.
+  const childrenByIndex = new Array(rivers.length).fill(null).map(() => []);
+  for (let ri = 0; ri < rivers.length; ri++) {
+    const p = rivers[ri]?.parentIndex;
+    if (p != null) childrenByIndex[p].push(ri);
+  }
+
+  const addPolygonToPath = (poly) => {
+    hiCtx.moveTo(poly[0].x * S, poly[0].y * S);
+    for (let j = 1; j < poly.length; j++) {
+      hiCtx.lineTo(poly[j].x * S, poly[j].y * S);
+    }
+    hiCtx.closePath();
+  };
+
+  if (drawRiverFlag) {
+    for (let ri = 0; ri < rivers.length; ri++) {
+      const river = rivers[ri];
+      if (!river || !river.points || river.points.length < 2) continue;
+      const parentIdx = river.parentIndex;
+      const parentBank = parentIdx != null ? bankByIndex[parentIdx] : null;
+      // Use each child's water polygon (inner edges) rather than its bank
+      // polygon (outer edges) so the notch in the parent's bank matches the
+      // child's water width — banks meet flush at the junction.
+      const childBanks = childrenByIndex[ri]
+        .map(ci => waterByIndex[ci])
+        .filter(b => b !== null);
+      const needsClip = (drawOceanFlag && sel) || parentBank || childBanks.length > 0;
+
+      if (needsClip) {
+        hiCtx.save();
+        hiCtx.beginPath();
+        if (drawOceanFlag && sel) {
+          addLandClipPath();
+        } else {
+          hiCtx.rect(0, 0, W * S, H * S);
+        }
+        if (parentBank) addPolygonToPath(parentBank);
+        for (const cb of childBanks) addPolygonToPath(cb);
+        hiCtx.clip('evenodd');
+      }
+
+      drawRiver(hi, river.points,
+        { ...riverParams, seed: (seed + ri * 0x9e3779b1) >>> 0, scale: S });
+
+      if (needsClip) hiCtx.restore();
+    }
+  }
+
+  // Draw ponds onto the hi-res mask buffer so they go through the same ink
+  // threshold + parchment composite as rivers and coastlines.
+  if (ponds.length > 0) {
+    drawPonds(hi, ponds, { ...gridOpts, scale: S, seed });
+  }
+
+  // Collect mountain hexes — peaks themselves are drawn later onto the
+  // parchment output (post-threshold) so they can fill with parchment color
+  // and properly occlude rivers, grid, and each other.
+  const mountainHexes = [];
+  for (const [key, tag] of biomesOut.tags) {
+    if (tag !== 'mountains') continue;
+    const [r, c] = key.split(',').map(Number);
+    mountainHexes.push({ r, c });
   }
 
   // Threshold hi-res to binary mask: dark pixels stay opaque dark, rest → transparent.
@@ -1378,22 +2373,84 @@ function renderMap(opts = {}) {
   outCtx.imageSmoothingQuality = 'high';
   outCtx.drawImage(hi, 0, 0, W * S, H * S, 0, 0, W, H);
 
-  return { canvas: out, river: riverInfo, ocean: oceanInfo };
+  // Mountains: drawn directly on parchment after the composite so their fill
+  // (parchment-colored) occludes rivers, grid lines, and earlier peaks.
+  if (mountainHexes.length > 0) {
+    drawMountains(out, mountainHexes, { ...gridOpts, seed });
+  }
+
+  return {
+    canvas: out,
+    river: riverInfo,
+    ocean: oceanInfo,
+    biomes: biomesInfo,
+    lakes: lakesInfo,
+    ponds: pondsInfo,
+  };
 }
 
 // ============================================================
 // DEMO ENTRY POINT
 // ============================================================
+function parseCliArgs(argv) {
+  const out = {};
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    const eat = () => argv[++i];
+    const m = /^--([a-zA-Z-]+)(?:=(.*))?$/.exec(a);
+    if (!m) continue;
+    const key = m[1];
+    const val = m[2] !== undefined ? m[2] : eat();
+    switch (key) {
+      case 'size': {
+        const n = parseInt(val, 10);
+        out.rows = n; out.cols = n;
+        break;
+      }
+      case 'rows': out.rows = parseInt(val, 10); break;
+      case 'cols': out.cols = parseInt(val, 10); break;
+      case 'seed': out.seed = parseInt(val, 10); break;
+      case 'seeds': out.seeds = val.split(',').map(s => parseInt(s, 10)); break;
+      case 'out': out.outPath = val; break;
+      default: throw new Error(`Unknown flag: --${key}`);
+    }
+  }
+  return out;
+}
+
+const DEMO_VARIANTS = [
+  { rows: 6,  cols: 6,  seed: 42 },
+  { rows: 8,  cols: 12, seed: 7 },
+  { rows: 11, cols: 7,  seed: 1337 },
+  { rows: 20, cols: 20, seed: 2024 },
+  { rows: 14, cols: 36, seed: 88 },
+  { rows: 36, cols: 14, seed: 256 },
+  { rows: 50, cols: 50, seed: 512 },
+];
+
 function main() {
   const fs = require('fs');
-  const seeds = [42, 7, 1337];
-  for (const seed of seeds) {
-    const { canvas, ocean } = renderMap({ seed });
-    const filename = `/Users/ace/code/inkdrifter/output_ocean_${seed}.png`;
+  const cli = parseCliArgs(process.argv.slice(2));
+  const explicit = cli.rows !== undefined || cli.cols !== undefined
+    || cli.seed !== undefined || cli.seeds !== undefined || cli.outPath !== undefined;
+
+  let runs;
+  if (explicit) {
+    const seeds = cli.seeds ?? (cli.seed !== undefined ? [cli.seed] : [42]);
+    runs = seeds.map(seed => ({ seed, rows: cli.rows, cols: cli.cols, outPath: cli.outPath }));
+  } else {
+    runs = DEMO_VARIANTS.map(v => ({ ...v }));
+  }
+
+  for (const r of runs) {
+    const { canvas, ocean } = renderMap({ seed: r.seed, rows: r.rows, cols: r.cols });
+    const tag = (r.rows && r.cols) ? `${r.rows}x${r.cols}_` : '';
+    const filename = r.outPath
+      ?? `/Users/ace/code/inkdrifter/output_ocean_${tag}${r.seed}.png`;
     fs.writeFileSync(filename, canvas.toBuffer('image/png'));
     const sidesStr = ocean ? ocean.sides.join('') || 'none' : 'n/a';
     const pct = ocean ? (ocean.waterFraction * 100).toFixed(1) : 'n/a';
-    console.log(`Saved ${filename} (seed=${seed}, sides=[${sidesStr}], water=${pct}%)`);
+    console.log(`Saved ${filename} (seed=${r.seed}, ${canvas.width}x${canvas.height}, sides=[${sidesStr}], water=${pct}%)`);
   }
 }
 
@@ -1406,9 +2463,10 @@ module.exports = {
   // rng / math
   createRng, gaussianFilter1D, jitter, blotSignal, weightedChoice,
   // paths
-  randomRiverPath, hexEdgeCenterline, resampleByArcLength,
+  randomRiverPath, hexEdgeCenterline, tributaryPath, tributaryCenterline,
+  generateRivers, defaultRiverCount, densifyAndSmooth, resampleByArcLength,
   // ocean
   pickSides, selectWaterHexes, buildCoastlineSegments, stitchSegments, drawOcean,
   // rendering
-  drawRiver, drawHexGrid, paintParchment, renderMap,
+  drawRiver, drawHexGrid, paintParchment, renderMap, drawMountains,
 };
