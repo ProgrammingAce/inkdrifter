@@ -294,6 +294,20 @@ input[type="text"]:focus, input[type="number"]:focus { border-color: var(--text-
   padding: 14px;
 }
 
+.sidebar-header {
+  padding: 0 0 12px 0;
+  text-align: center;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.sidebar-title {
+  font-family: var(--font-head);
+  font-size: 1.2rem;
+  color: var(--text-gold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .sidebar-section h3 {
   font-family: var(--font-head);
   font-size: 0.95rem;
