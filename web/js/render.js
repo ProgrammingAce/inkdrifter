@@ -81,6 +81,15 @@ export function renderOverlay(ctx, state, isHost, dragPos) {
     }
   }
 
+  // Draw "waiting for marker" message (players only, no marker yet)
+  if (!isHost && !marker && state.status === 'ready') {
+    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+    ctx.font = '18px Georgia, serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Waiting for the host to place a marker…', W / 2, H / 2);
+  }
+
   // Draw marker
   const markerPos = dragPos || (marker ? hexCenter(marker.row, marker.col, originX, originY) : null);
   if (markerPos) {
