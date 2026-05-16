@@ -153,9 +153,16 @@ async function initMap() {
   mapStack.style.width = W + 'px';
   mapStack.style.height = H + 'px';
   loadingEl.style.display = 'none';
-  mapStack.style.display = '';
+  mapStack.style.display = 'block';
 
-  await loadBaseMap(baseCanvas, `/lobbies/${code}/map.png`);
+  try {
+    await loadBaseMap(baseCanvas, `/lobbies/${code}/map.png`);
+  } catch (err) {
+    console.error('Failed to load map image:', err);
+    showToast('Failed to load map. Please refresh.', true);
+    mapStack.style.display = 'none';
+    return;
+  }
   mapLoaded = true;
   startRenderLoop(
     overlayCtx,
@@ -186,8 +193,13 @@ socket.on(EVENTS.LOBBY_STATE, async (data) => {
   }
 });
 
-socket.on(EVENTS.MAP_READY, () => {
-  // Will receive a fresh lobby_state right after this
+socket.on(EVENTS.MAP_READY, async () => {
+  if (!mapLoaded) {
+    // If a lobby_state with ready status hasn't arrived yet, load the map here.
+    if (state && state.status === 'ready') {
+      await initMap();
+    }
+  }
 });
 
 socket.on(EVENTS.PLAYER_JOINED, ({ playerId, name }) => {
@@ -312,5 +324,9 @@ if (!hostToken && !playerToken) {
     const token = hostToken || playerToken;
     const role = hostToken ? 'host' : 'player';
     socket.emit(EVENTS.AUTH, { code, role, token });
+  });
+  socket.on('connect_error', (err) => {
+    console.error('[lobby.js] socket connection error:', err);
+    showToast('Connection error. Please refresh.', true);
   });
 }

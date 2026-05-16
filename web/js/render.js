@@ -37,7 +37,8 @@ export function renderOverlay(ctx, state, isHost, dragPos) {
   const H = ctx.canvas.height;
   ctx.clearRect(0, 0, W, H);
 
-  const fogEnabled = isHost ? fog.host : fog.players;
+  // Host always has an opaque view of the map — fog never applies to them.
+  const fogEnabled = isHost ? false : fog.players;
 
   if (fogEnabled) {
     const revealed = state._revealedSet;
