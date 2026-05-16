@@ -349,17 +349,17 @@ input[type="text"]:focus, input[type="number"]:focus { border-color: var(--text-
   display: block;
   width: 100%;
   padding: 10px;
-  background: rgba(204,34,34,0.15);
-  border: 1px solid var(--accent);
+  background: var(--accent);
+  border: 1px solid #a03000;
   border-radius: 4px;
-  color: var(--accent);
+  color: var(--parchment);
   font-family: var(--font-head);
   font-size: 0.92rem;
   cursor: pointer;
   letter-spacing: 0.03em;
   transition: background 0.15s;
 }
-.btn-primary:hover { background: rgba(204,34,34,0.25); }
+.btn-primary:hover { background: var(--accent-hover); }
 
 .btn-secondary {
   display: block;

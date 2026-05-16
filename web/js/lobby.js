@@ -254,7 +254,11 @@ socket.on(EVENTS.LOBBY_STATE, async (data) => {
   } else if (data.status === 'preview' || data.status === 'ready') {
     loadingEl.style.display = 'none';
     mapStack.style.display = 'block';
-    tryLoadMap();
+    if (mapLoaded) {
+      if (data.status === 'ready') showInGameUI();
+    } else {
+      tryLoadMap();
+    }
   }
 });
 
