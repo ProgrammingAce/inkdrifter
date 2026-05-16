@@ -142,27 +142,65 @@ function updateMarkerBanner() {
   }
 }
 
+function showPreviewUI() {
+  if (!isHost) return;
+  if (hostControlsEl) hostControlsEl.style.display = 'none';
+  const bottom = document.getElementById('host-controls-bottom');
+  if (bottom) bottom.style.display = 'none';
+  const preview = document.getElementById('host-controls-preview');
+  if (preview) preview.style.display = '';
+}
+
+function showInGameUI() {
+  if (isHost) {
+    const preview = document.getElementById('host-controls-preview');
+    if (preview) preview.style.display = 'none';
+    if (hostControlsEl) hostControlsEl.style.display = '';
+    const bottom = document.getElementById('host-controls-bottom');
+    if (bottom) bottom.style.display = '';
+  }
+  const pending = document.querySelector('#pending-list');
+  if (pending) pending.closest('.sidebar-section').style.display = '';
+}
+
+function hidePreviewUI() {
+  const preview = document.getElementById('host-controls-preview');
+  if (preview) preview.style.display = 'none';
+}
+
 // ── Map loading ───────────────────────────────────────────────────────────────
+async function reloadMap() {
+  try {
+    await loadBaseMap(baseCanvas, `/lobbies/${code}/map.png`);
+  } catch (err) {
+    console.error('Failed to reload map image:', err);
+    showToast('Failed to reload map.', true);
+    return;
+  }
+}
+
 async function initMap() {
   const W = state.canvasWidth;
   const H = state.canvasHeight;
+
   baseCanvas.width = W;
   baseCanvas.height = H;
   overlayCanvas.width = W;
   overlayCanvas.height = H;
+
   mapStack.style.width = W + 'px';
   mapStack.style.height = H + 'px';
-  loadingEl.style.display = 'none';
-  mapStack.style.display = 'block';
 
   try {
-    await loadBaseMap(baseCanvas, `/lobbies/${code}/map.png`);
+    const mapUrl = `/lobbies/${code}/map.png?v=${state.seed ?? 0}`;
+    await loadBaseMap(baseCanvas, mapUrl);
   } catch (err) {
     console.error('Failed to load map image:', err);
     showToast('Failed to load map. Please refresh.', true);
-    mapStack.style.display = 'none';
     return;
   }
+  loadingEl.style.display = 'none';
+  mapStack.style.display = 'block';
   mapLoaded = true;
   startRenderLoop(
     overlayCtx,
@@ -182,25 +220,85 @@ async function initMap() {
   updateMarkerBanner();
 }
 
+let _mapLoadPending = false;
+
+function tryLoadMap() {
+  if (!state) return;
+  if (mapLoaded) return;
+  if (_mapLoadPending) return;
+  if (state.status !== 'preview' && state.status !== 'ready') return;
+  _mapLoadPending = true;
+  initMap()
+    .then(() => {
+      if (state.status === 'ready') showInGameUI();
+      if (state.status === 'preview') showPreviewUI();
+      clearTimeout(_mapLoadTimeout);
+    })
+    .catch((err) => {
+      console.error('[DEBUG] Map load failed:', err);
+    })
+    .finally(() => {
+      _mapLoadPending = false;
+    });
+}
+
 // ── Socket events ─────────────────────────────────────────────────────────────
 socket.on(EVENTS.LOBBY_STATE, async (data) => {
   applyState(data);
-  if (data.status === 'ready' && !mapLoaded) {
-    await initMap();
-  } else if (data.status === 'rendering') {
+
+  if (data.status === 'rendering') {
     loadingEl.style.display = '';
     mapStack.style.display = 'none';
+    hidePreviewUI();
+    mapLoaded = false;
+  } else if (data.status === 'preview' || data.status === 'ready') {
+    loadingEl.style.display = 'none';
+    mapStack.style.display = 'block';
+    tryLoadMap();
   }
 });
 
-socket.on(EVENTS.MAP_READY, async () => {
-  if (!mapLoaded) {
-    // If a lobby_state with ready status hasn't arrived yet, load the map here.
-    if (state && state.status === 'ready') {
-      await initMap();
-    }
-  }
+socket.on(EVENTS.MAP_READY, () => {
+  tryLoadMap();
 });
+
+// Timeout to prevent stuck spinner
+let _mapLoadTimeout = setTimeout(() => {
+  if (!mapLoaded && state) {
+    showToast('Map load timed out. Please refresh.', true);
+  }
+}, 15000);
+
+// Fetch lobby status as a fallback if socket events don't arrive
+fetch(`/api/lobbies/${code}`)
+  .then(res => res.ok ? res.json() : null)
+  .then(lobbyStatus => {
+    if (!lobbyStatus) return;
+    if (lobbyStatus.status === 'preview' && !mapLoaded) {
+      const initialData = {
+        ...lobbyStatus,
+        _revealedSet: new Set(),
+        revealed: [],
+        players: {},
+        marker: null,
+        fog: { host: true, players: true },
+        pendingRequests: [],
+      };
+      state = initialData;
+      _mapLoadPending = true;
+      initMap().then(() => {
+        showPreviewUI();
+        clearTimeout(_mapLoadTimeout);
+      }).catch(err => {
+        console.error('[DEBUG] Initial map load failed:', err);
+        showToast('Failed to load map. Please refresh.', true);
+      }).finally(() => {
+        _mapLoadPending = false;
+      });
+    } else if (lobbyStatus.status === 'rendering' && !state) {
+      state = { ...lobbyStatus, _revealedSet: new Set(), revealed: [], players: {}, marker: null, fog: { host: true, players: true }, pendingRequests: [] };
+    }
+  });
 
 socket.on(EVENTS.PLAYER_JOINED, ({ playerId, name }) => {
   if (!state) return;
@@ -312,6 +410,13 @@ if (isHost && hostControlsEl) {
       window.location.href = '/';
     }
   });
+
+  document.getElementById('regenerate-btn')?.addEventListener('click', () => {
+    socket.emit(EVENTS.REGENERATE_MAP);
+  });
+  document.getElementById('start-game-btn')?.addEventListener('click', () => {
+    socket.emit(EVENTS.START_GAME);
+  });
 }
 
 // ── Connect ───────────────────────────────────────────────────────────────────
@@ -326,7 +431,7 @@ if (!hostToken && !playerToken) {
     socket.emit(EVENTS.AUTH, { code, role, token });
   });
   socket.on('connect_error', (err) => {
-    console.error('[lobby.js] socket connection error:', err);
+    console.error('[DEBUG] Socket connection error:', err);
     showToast('Connection error. Please refresh.', true);
   });
 }

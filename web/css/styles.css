@@ -344,6 +344,39 @@ input[type="text"]:focus, input[type="number"]:focus { border-color: var(--text-
 }
 .btn-danger:hover { background: rgba(139,37,0,0.25); }
 
+/* Preview buttons */
+.btn-primary {
+  display: block;
+  width: 100%;
+  padding: 10px;
+  background: rgba(204,34,34,0.15);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  color: var(--accent);
+  font-family: var(--font-head);
+  font-size: 0.92rem;
+  cursor: pointer;
+  letter-spacing: 0.03em;
+  transition: background 0.15s;
+}
+.btn-primary:hover { background: rgba(204,34,34,0.25); }
+
+.btn-secondary {
+  display: block;
+  width: 100%;
+  padding: 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-light);
+  font-family: var(--font-head);
+  font-size: 0.88rem;
+  cursor: pointer;
+  letter-spacing: 0.03em;
+  transition: background 0.15s;
+}
+.btn-secondary:hover { background: rgba(107,58,31,0.2); }
+
 /* Toast */
 .toast {
   position: fixed;

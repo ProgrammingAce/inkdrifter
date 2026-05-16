@@ -85,7 +85,26 @@ class Lobby {
 
   setReady(pngBuffer) {
     this.pngBuffer = pngBuffer;
+    this.status = 'preview';
+  }
+
+  startGame() {
+    if (this.status !== 'preview') return false;
     this.status = 'ready';
+    this.fog = { host: true, players: true };
+    return true;
+  }
+
+  regenerate() {
+    this.status = 'rendering';
+    this.pngBuffer = null;
+    // Generate a new seed for the regenerated map
+    this.seed = crypto.randomInt(0, 2 ** 32);
+    // Clear all game state from preview
+    this.revealed = new Set();
+    this.marker = null;
+    this.pendingRequests = {};
+    return true;
   }
 
   moveMarker(row, col) {

@@ -67,6 +67,20 @@
       <ul id="pending-list" class="request-list"></ul>
     </div>
 
+ <!-- Preview controls (host only) -->
+    <div id="host-controls-preview" class="sidebar-section" style="display:none;">
+      <h3>Preview Mode</h3>
+      <p style="font-size:0.85rem;color:var(--text-light);margin-bottom:12px;">
+        This is your map preview. Generate a new map or start the game.
+      </p>
+      <button id="regenerate-btn" class="btn-secondary" style="width:100%;margin-bottom:8px;">
+        &#x1f3b2; Generate New Map
+      </button>
+      <button id="start-game-btn" class="btn-primary" style="width:100%;">
+        &#9654; Start Game
+      </button>
+    </div>
+
     <!-- New game (host only) -->
     <div id="host-controls-bottom" class="sidebar-section" style="display:none;">
       <button id="new-game-btn" class="btn-danger">&#8635; New Game</button>
@@ -77,13 +91,6 @@
 <div id="toast" class="toast"></div>
 
 <script src="/socket.io/socket.io.js"></script>
-<script type="module" src="/js/lobby.js"></script>
-<script type="module">
-  // Show the bottom host controls if the script detects host role
-  const code = window.location.pathname.split('/').pop();
-  if (localStorage.getItem('hostToken_' + code)) {
-    document.getElementById('host-controls-bottom').style.display = '';
-  }
-</script>
+<script type="module" src="/js/lobby.js?v=2"></script>
 </body>
 </html>

@@ -132,6 +132,49 @@ app.get('/lobbies/:code/map.png', (req, res) => {
   res.send(lobby.pngBuffer);
 });
 
+app.get('/api/lobbies/:code', (req, res) => {
+  const lobby = manager.getLobby(req.params.code);
+  if (!lobby) return res.status(404).json({ error: 'no_such_lobby' });
+  res.json({
+    code: lobby.code,
+    seed: lobby.seed,
+    rows: lobby.rows,
+    cols: lobby.cols,
+    canvasWidth: lobby.canvasWidth,
+    canvasHeight: lobby.canvasHeight,
+    status: lobby.status,
+    hostName: lobby.hostName,
+  });
+});
+
+app.post('/api/lobbies/:code/regenerate', async (req, res) => {
+  const { code } = req.params;
+  const lobby = manager.getLobby(code);
+  if (!lobby) return res.status(404).json({ error: 'no_such_lobby' });
+  if (lobby.status !== 'preview') return res.status(409).json({ error: 'not_preview' });
+  lobby.regenerate();
+  renderQueue.render(lobby.seed, lobby.rows, lobby.cols).then(pngBuffer => {
+    lobby.pngBuffer = pngBuffer;
+    lobby.status = 'preview';
+    io.to(code).emit(EVENTS.MAP_READY, {});
+    broadcastLobbyState(code);
+  }).catch(err => {
+    console.error('Regenerate failed for lobby', code, err);
+    manager.destroyLobby(code, 'render_failed');
+  });
+  res.json({ ok: true });
+});
+
+app.post('/api/lobbies/:code/start', (req, res) => {
+  const { code } = req.params;
+  const lobby = manager.getLobby(code);
+  if (!lobby) return res.status(404).json({ error: 'no_such_lobby' });
+  if (lobby.status !== 'preview') return res.status(409).json({ error: 'lobby_not_preview' });
+  lobby.startGame();
+  broadcastLobbyState(code);
+  res.json({ ok: true });
+});
+
 // Serve lobby.html for /lobby/:code routes
 app.get('/lobby/:code', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'web', 'lobby.html'));
@@ -279,9 +322,36 @@ io.on('connection', (socket) => {
     io.to(lobby.code).emit(EVENTS.REQUEST_CANCELLED, { requestId, reason: 'acknowledged' });
   });
 
-  socket.on(EVENTS.NEW_GAME, () => {
+ socket.on(EVENTS.NEW_GAME, () => {
     if (!socket.data.authenticated || !socket.data.isHost) return;
     manager.destroyLobby(socket.data.lobbyCode, 'new_game');
+  });
+
+  socket.on(EVENTS.START_GAME, () => {
+    if (!socket.data.authenticated || !socket.data.isHost) return;
+    const lobby = manager.getLobby(socket.data.lobbyCode);
+    if (!lobby) return;
+    if (lobby.status !== 'preview') return;
+    lobby.startGame();
+    broadcastLobbyState(socket.data.lobbyCode);
+  });
+
+socket.on(EVENTS.REGENERATE_MAP, () => {
+    if (!socket.data.authenticated || !socket.data.isHost) return;
+    const lobby = manager.getLobby(socket.data.lobbyCode);
+    if (!lobby) return;
+    if (lobby.status !== 'preview') return;
+    lobby.regenerate();
+    io.to(lobby.code).emit(EVENTS.LOBBY_STATE, lobby.toWire('host', null));
+    renderQueue.render(lobby.seed, lobby.rows, lobby.cols).then(pngBuffer => {
+      lobby.pngBuffer = pngBuffer;
+      lobby.status = 'preview';
+      io.to(lobby.code).emit(EVENTS.MAP_READY, {});
+      broadcastLobbyState(lobby.code);
+    }).catch(err => {
+      console.error('Regenerate failed for lobby', lobby.code, err);
+      manager.destroyLobby(lobby.code, 'render_failed');
+    });
   });
 
   socket.on('disconnect', () => {

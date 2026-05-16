@@ -6,6 +6,8 @@ const EVENTS = {
   FOG_TOGGLE: 'fog_toggle',
   ACKNOWLEDGE_REQUEST: 'acknowledge_request',
   NEW_GAME: 'new_game',
+  START_GAME: 'start_game',
+  REGENERATE_MAP: 'regenerate_map',
 
   // Server → Client
   LOBBY_STATE: 'lobby_state',

@@ -21,12 +21,20 @@ function strokeHex(ctx, cx, cy, size) {
 export function loadBaseMap(canvas, url) {
   return new Promise((resolve, reject) => {
     const img = new Image();
+    let settled = false;
+    const done = (result) => {
+      if (settled) return;
+      settled = true;
+      result();
+    };
     img.onload = () => {
       const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0);
-      resolve();
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      done(() => resolve());
     };
-    img.onerror = reject;
+    img.onerror = () => done(() => reject(new Error('Failed to load image')));
+    setTimeout(() => done(() => reject(new Error('Image load timeout'))), 15000);
     img.src = url;
   });
 }
@@ -37,7 +45,10 @@ export function renderOverlay(ctx, state, isHost, dragPos) {
   const H = ctx.canvas.height;
   ctx.clearRect(0, 0, W, H);
 
-  const hostFogEnabled = isHost && fog.host;
+  // Preview mode: no fog at all. Game mode: apply fog based on settings.
+  const inPreview = state.status === 'preview';
+
+  const hostFogEnabled = isHost && !inPreview && fog.host;
   const playerFogEnabled = !isHost && fog.players;
 
   if (hostFogEnabled || playerFogEnabled) {
