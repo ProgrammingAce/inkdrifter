@@ -1616,113 +1616,476 @@ function drawPonds(canvas, ponds, opts = {}) {
 // ============================================================
 // MOUNTAINS
 // ============================================================
-// Draw a single hand-drawn mountain peak: fill (parchment-colored, to occlude
-// anything behind it) plus a thick curved outline and hash-mark shading down
-// the LEFT slope (matching the reference's one-sided shading).
-function drawMountainPeak(ctx, peak, rng, fillColor, lineColor) {
-  const { x, y, width, height } = peak;
-  const apexX = x;
-  const apexY = y - height * 0.55;
-  const baseY = y + height * 0.45;
-  const leftBaseX = x - width * 0.5;
-  const rightBaseX = x + width * 0.5;
+// Draw a single triangular peak with slightly curved slopes and fir-tick
+// hash marks on both sides — matches the hand-drawn reference style.
+function drawMountainPeak(ctx, peak, lineColor) {
+  const { px, apexY, baseY, leftBaseX, rightBaseX, rng } = peak;
 
-  // Bezier control points for each slope (gentle outward curve).
-  const lc1x = apexX - width * 0.06;
-  const lc1y = apexY + height * 0.20;
-  const lc2x = leftBaseX + width * 0.04;
-  const lc2y = baseY - height * 0.12;
-  const rc1x = apexX + width * 0.06;
-  const rc1y = apexY + height * 0.20;
-  const rc2x = rightBaseX - width * 0.04;
-  const rc2y = baseY - height * 0.12;
+  const outlineWidth = Math.max(3.5, Math.min(6, HEX_SIZE * 0.10));
+  const tickWidth = Math.max(2, Math.min(3.5, HEX_SIZE * 0.055));
 
-  // Fill silhouette with parchment color so this peak occludes everything
-  // behind it (other peaks, rivers, grid lines).
-  ctx.beginPath();
-  ctx.moveTo(leftBaseX, baseY);
-  ctx.bezierCurveTo(lc2x, lc2y, lc1x, lc1y, apexX, apexY);
-  ctx.bezierCurveTo(rc1x, rc1y, rc2x, rc2y, rightBaseX, baseY);
-  ctx.closePath();
-  ctx.fillStyle = fillColor;
-  ctx.fill();
-
-  // Outline.
   ctx.strokeStyle = lineColor;
+  ctx.fillStyle = peak.fillColor; // parchment color; occludes peaks behind
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  ctx.lineWidth = Math.max(1.4, Math.min(3.2, height * 0.05));
+
+  // Slight inward curve on each slope: control point pulled toward the
+  // peak's vertical axis to give a hand-drawn concave feel.
+  const leftCtrlX = leftBaseX + (px - leftBaseX) * 0.55 + (rng.uniform() - 0.5) * HEX_SIZE * 0.04;
+  const leftCtrlY = baseY + (apexY - baseY) * 0.35;
+  const rightCtrlX = rightBaseX + (px - rightBaseX) * 0.55 + (rng.uniform() - 0.5) * HEX_SIZE * 0.04;
+  const rightCtrlY = baseY + (apexY - baseY) * 0.35;
+
+  // Fill first so the peak occludes anything drawn behind it.
   ctx.beginPath();
   ctx.moveTo(leftBaseX, baseY);
-  ctx.bezierCurveTo(lc2x, lc2y, lc1x, lc1y, apexX, apexY);
-  ctx.bezierCurveTo(rc1x, rc1y, rc2x, rc2y, rightBaseX, baseY);
+  ctx.quadraticCurveTo(leftCtrlX, leftCtrlY, px, apexY);
+  ctx.quadraticCurveTo(rightCtrlX, rightCtrlY, rightBaseX, baseY);
+  ctx.closePath();
+  ctx.fill();
+
+  // Stroke the two slopes (leave the base open — reference has no baseline).
+  ctx.lineWidth = outlineWidth;
+  ctx.beginPath();
+  ctx.moveTo(leftBaseX, baseY);
+  ctx.quadraticCurveTo(leftCtrlX, leftCtrlY, px, apexY);
+  ctx.quadraticCurveTo(rightCtrlX, rightCtrlY, rightBaseX, baseY);
   ctx.stroke();
 
-  // Hash-mark shading on the LEFT slope, pointing INWARD into the peak body.
-  ctx.lineWidth = Math.max(0.9, Math.min(2.0, height * 0.03));
-  const ticks = 4 + (rng.uniform() < 0.5 ? 0 : 1);
-  const p0x = apexX, p0y = apexY;
-  const p1x = lc1x, p1y = lc1y;
-  const p2x = lc2x, p2y = lc2y;
-  const p3x = leftBaseX, p3y = baseY;
-  for (let i = 0; i < ticks; i++) {
-    const t = 0.22 + (i / Math.max(1, ticks - 1)) * 0.62;
-    const mt = 1 - t;
-    const bx = mt*mt*mt*p0x + 3*mt*mt*t*p1x + 3*mt*t*t*p2x + t*t*t*p3x;
-    const by = mt*mt*mt*p0y + 3*mt*mt*t*p1y + 3*mt*t*t*p2y + t*t*t*p3y;
-    const tx = 3*mt*mt*(p1x-p0x) + 6*mt*t*(p2x-p1x) + 3*t*t*(p3x-p2x);
-    const ty = 3*mt*mt*(p1y-p0y) + 6*mt*t*(p2y-p1y) + 3*t*t*(p3y-p2y);
+  // Fir-tick hash marks on the LEFT slope only, pointing outward & slightly
+  // down, shorter near the apex and longer near the base.
+  ctx.lineWidth = tickWidth;
+  const baseX = leftBaseX;
+  const ctrlX = leftCtrlX;
+  const ctrlY = leftCtrlY;
+  // Tick count scales with peak height: ~3 for short peaks, ~10 for tallest.
+  const peakHeight = baseY - apexY;
+  const heightTicks = Math.round(peakHeight / (HEX_SIZE * 0.11));
+  const tickCount = Math.max(3, Math.min(11, heightTicks + Math.floor(rng.uniform() * 2)));
+  for (let t = 0; t < tickCount; t++) {
+    const frac = 0.18 + (t / (tickCount - 1 || 1)) * 0.68;
+    const u = 1 - frac;
+    const bx = u * u * baseX + 2 * u * frac * ctrlX + frac * frac * px;
+    const by = u * u * baseY + 2 * u * frac * ctrlY + frac * frac * apexY;
+    const tx = 2 * u * (ctrlX - baseX) + 2 * frac * (px - ctrlX);
+    const ty = 2 * u * (ctrlY - baseY) + 2 * frac * (apexY - ctrlY);
     const tlen = Math.hypot(tx, ty) || 1;
-    const nx = ty / tlen;
-    const ny = -tx / tlen;
-    const tiltX = nx * 0.78;
-    const tiltY = ny * 0.78 + 0.55;
-    const tlen2 = Math.hypot(tiltX, tiltY) || 1;
-    const tickLen = height * (0.10 + t * 0.18) * (0.85 + rng.uniform() * 0.3);
-    const ex = bx + (tiltX / tlen2) * tickLen;
-    const ey = by + (tiltY / tlen2) * tickLen;
+    // Outward (left of travel) for the left slope.
+    const nx = -ty / tlen;
+    const ny = tx / tlen;
+    // Bias slightly downward so ticks droop like fir needles.
+    const droopX = nx * 0.85;
+    const droopY = ny * 0.85 + 0.45;
+    const dlen = Math.hypot(droopX, droopY) || 1;
+    const dx = droopX / dlen;
+    const dy = droopY / dlen;
+    const slopeLen = Math.hypot(px - baseX, apexY - baseY);
+    const tickLen = slopeLen * (0.22 - frac * 0.10) * (0.8 + rng.uniform() * 0.5);
     ctx.beginPath();
     ctx.moveTo(bx, by);
+    ctx.lineTo(bx + dx * tickLen, by + dy * tickLen);
+    ctx.stroke();
+  }
+}
+
+// Draw mountain chains across all mountain-biome hexes. Adjacent mountain
+// hexes are grouped into connected chains, and each chain is drawn as a
+// single continuous outline with hash marks on the left-facing slopes.
+// Drawn AFTER the ink threshold pass.
+function drawMountains(canvas, mountainHexes, opts = {}) {
+  if (!mountainHexes || mountainHexes.length === 0) return;
+  const ctx = canvas.getContext('2d');
+  const seed = opts.seed ?? 0;
+  const lineColor = opts.lineColor ?? '#2a2015';
+  const fillColor = opts.fillColor ?? '#e8d5b7';
+
+  // Group adjacent mountain hexes into connected chains using flood fill.
+  const visited = new Set();
+  const chains = [];
+
+  for (const h of mountainHexes) {
+    const key = `${h.r},${h.c}`;
+    if (visited.has(key)) continue;
+
+    // BFS to find connected component.
+    const chain = [];
+    const queue = [h];
+    visited.add(key);
+
+    while (queue.length > 0) {
+      const cur = queue.shift();
+      const curCenter = hexCenter(cur.r, cur.c, opts);
+      chain.push({
+        r: cur.r,
+        c: cur.c,
+        center: curCenter,
+        rng: createRng((((seed + cur.r * 73856093) ^ (cur.c * 19349663)) ^ 0x4E54C0DE) >>> 0),
+      });
+
+      for (const n of hexNeighbors(cur.r, cur.c)) {
+        const nk = `${n.r},${n.c}`;
+        if (visited.has(nk)) continue;
+        const nHex = mountainHexes.find(m => `${m.r},${m.c}` === nk);
+        if (nHex) {
+          visited.add(nk);
+          queue.push(nHex);
+        }
+      }
+    }
+
+    chains.push(chain);
+  }
+
+  // Build peaks for every hex, then draw back-to-front so closer peaks
+  // visually occlude the ones behind them (the parchment fill in
+  // drawMountainPeak handles the masking).
+  const peaks = [];
+  for (const chain of chains) {
+    for (const h of chain) {
+      // Each hex gets a cluster of 1-3 overlapping peaks.
+      const peakCount = 1 + Math.floor(h.rng.uniform() * 3);
+      // Spread peaks horizontally; scales with cluster size so larger groups
+      // fan out beyond the hex footprint rather than piling on top of each other.
+      const spread = HEX_SIZE * (0.95 + peakCount * 0.18);
+      for (let i = 0; i < peakCount; i++) {
+        // Bias height toward extremes (cubic skew) so each cluster mixes
+        // squat foothills with tall spires instead of uniform mid-sized peaks.
+        const hu = h.rng.uniform();
+        const heightSkew = hu < 0.5
+          ? Math.pow(hu * 2, 1.8) * 0.5            // 0 .. 0.5 (short half)
+          : 1 - Math.pow((1 - hu) * 2, 1.8) * 0.5; // 0.5 .. 1 (tall half)
+        const peakHeight = HEX_SIZE * 0.35 + heightSkew * 81; // ~19-100px
+        // Width scales with height so taller peaks have proportionally wider
+        // bases (no skinny spires); still independent jitter for variation.
+        const widthJitter = 0.85 + h.rng.uniform() * 0.45; // 0.85x-1.30x
+        const peakWidth = (HEX_SIZE * 0.45 + peakHeight * 0.85) * widthJitter;
+        // Distribute peaks horizontally across the hex with jitter.
+        const t = peakCount === 1 ? 0 : (i / (peakCount - 1)) - 0.5;
+        const jitterX = t * spread + (h.rng.uniform() - 0.5) * HEX_SIZE * 0.15;
+        const jitterY = (h.rng.uniform() - 0.5) * HEX_SIZE * 0.30;
+        const px = h.center.x + jitterX;
+        const baseY = h.center.y + jitterY + HEX_SIZE * 0.25;
+        const apexY = baseY - peakHeight;
+        peaks.push({
+          px,
+          apexY,
+          baseY,
+          leftBaseX: px - peakWidth * 0.5,
+          rightBaseX: px + peakWidth * 0.5,
+          rng: h.rng,
+          fillColor,
+          sortKey: baseY,
+        });
+      }
+    }
+  }
+
+  // Back-to-front: peaks with higher apex (smaller baseY) drawn first
+  // so peaks in front of them occlude properly.
+  peaks.sort((a, b) => a.sortKey - b.sortKey);
+
+  for (const p of peaks) {
+    drawMountainPeak(ctx, p, lineColor);
+  }
+}
+
+// ============================================================
+// HILLS
+// ============================================================
+// Draw a single hill as a wavy multi-point curve (Catmull-Rom through key
+// points so the line can have 1-2 humps and natural sinuous variation, like
+// the reference). Rounded blob ends, horizontal hash marks beneath the left
+// slope tucked INTO the hill body.
+function drawHillBump(ctx, hill, lineColor) {
+  const { leftBaseX, rightBaseX, points, rng } = hill;
+
+  // Match mountain stroke weights so hills read at the same line thickness.
+  const strokeWidth = Math.max(3.5, Math.min(6, HEX_SIZE * 0.10));
+  const tickWidth = Math.max(2, Math.min(3.5, HEX_SIZE * 0.055));
+  const width = rightBaseX - leftBaseX;
+
+  ctx.strokeStyle = lineColor;
+  ctx.fillStyle = hill.fillColor;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  // Catmull-Rom → cubic bezier segments through key points. Pads ends with
+  // duplicates so the curve starts/ends exactly on the first/last point.
+  const padded = [points[0], ...points, points[points.length - 1]];
+  const traceCurve = (yOffset) => {
+    ctx.moveTo(padded[1].x, padded[1].y + yOffset);
+    for (let i = 1; i < padded.length - 2; i++) {
+      const p0 = padded[i - 1], p1 = padded[i], p2 = padded[i + 1], p3 = padded[i + 2];
+      const c1x = p1.x + (p2.x - p0.x) / 6;
+      const c1y = p1.y + (p2.y - p0.y) / 6 + yOffset;
+      const c2x = p2.x - (p3.x - p1.x) / 6;
+      const c2y = p2.y - (p3.y - p1.y) / 6 + yOffset;
+      ctx.bezierCurveTo(c1x, c1y, c2x, c2y, p2.x, p2.y + yOffset);
+    }
+  };
+
+  // Sample curve densely for the occlusion mask (so it follows actual shape).
+  const samples = [];
+  {
+    const pad = padded;
+    samples.push({ x: pad[1].x, y: pad[1].y });
+    for (let i = 1; i < pad.length - 2; i++) {
+      const p0 = pad[i - 1], p1 = pad[i], p2 = pad[i + 1], p3 = pad[i + 2];
+      const c1x = p1.x + (p2.x - p0.x) / 6, c1y = p1.y + (p2.y - p0.y) / 6;
+      const c2x = p2.x - (p3.x - p1.x) / 6, c2y = p2.y - (p3.y - p1.y) / 6;
+      const STEPS = 10;
+      for (let s = 1; s <= STEPS; s++) {
+        const t = s / STEPS, u = 1 - t;
+        const x = u*u*u*p1.x + 3*u*u*t*c1x + 3*u*t*t*c2x + t*t*t*p2.x;
+        const y = u*u*u*p1.y + 3*u*u*t*c1y + 3*u*t*t*c2y + t*t*t*p2.y;
+        samples.push({ x, y });
+      }
+    }
+  }
+
+  // Parchment occlusion mask: curve offset upward, then back across below.
+  const upperOffset = strokeWidth * 0.65;
+  const lowerOffset = strokeWidth * 0.65 + width * 0.20;
+  ctx.beginPath();
+  for (let i = 0; i < samples.length; i++) {
+    const s = samples[i];
+    if (i === 0) ctx.moveTo(s.x, s.y - upperOffset);
+    else ctx.lineTo(s.x, s.y - upperOffset);
+  }
+  const last = samples[samples.length - 1];
+  const first = samples[0];
+  ctx.lineTo(last.x, last.y + lowerOffset);
+  ctx.lineTo(first.x, first.y + lowerOffset);
+  ctx.closePath();
+  ctx.fill();
+
+  // Main stroke.
+  ctx.lineWidth = strokeWidth;
+  ctx.beginPath();
+  traceCurve(0);
+  ctx.stroke();
+
+  // Short angled hash marks beneath the LEFT slope, slanting down-right
+  // (like the reference — small diagonal ticks tucked under the brush body).
+  ctx.lineCap = 'round';
+  ctx.lineWidth = tickWidth;
+  const tickCount = 3 + Math.floor(rng.uniform() * 2); // 3-4 ticks per hill
+  for (let ti = 0; ti < tickCount; ti++) {
+    const frac = 0.10 + (ti / (tickCount - 1 || 1)) * 0.32;
+    const idx = Math.min(samples.length - 1, Math.floor(frac * (samples.length - 1)));
+    const p = samples[idx];
+    const tickLen = width * (0.09 + rng.uniform() * 0.04);
+    // Start just below the brush body, slant down-right ~25°.
+    const startGap = strokeWidth * 0.55;
+    const angle = (15 + rng.uniform() * 20) * Math.PI / 180;
+    const sx = p.x - tickLen * 0.15;
+    const sy = p.y + startGap;
+    const ex = sx + Math.cos(angle) * tickLen;
+    const ey = sy + Math.sin(angle) * tickLen;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
     ctx.lineTo(ex, ey);
     ctx.stroke();
   }
 }
 
-// Draw mountain peaks across all mountain-biome hexes. Each hex gets 1–7
-// peaks at random positions within the hex, with varying sizes. Peaks
-// overflow their hex and occlude each other (and anything behind them) via a
-// parchment-colored fill. Must be drawn AFTER the ink threshold pass so the
-// fill survives onto the parchment output.
-function drawMountains(canvas, mountainHexes, opts = {}) {
-  if (!mountainHexes || mountainHexes.length === 0) return;
+// Draw hill clusters across all hill-biome hexes. Each hex gets a small
+// cluster of 3-5 scattered hill bumps. Drawn AFTER the ink threshold pass.
+function drawHills(canvas, hillHexes, opts = {}) {
+  if (!hillHexes || hillHexes.length === 0) return;
   const ctx = canvas.getContext('2d');
   const seed = opts.seed ?? 0;
-  const fillColor = opts.fillColor ?? '#e8d5b7';
   const lineColor = opts.lineColor ?? '#2a2015';
+  const fillColor = opts.fillColor ?? '#e8d5b7';
 
-  const peaks = [];
-  for (const h of mountainHexes) {
-    const center = hexCenter(h.r, h.c, opts);
-    const rng = createRng((((seed + h.r * 73856093) ^ (h.c * 19349663)) ^ 0x4E54C0DE) >>> 0);
-    // 1–7 peaks per hex.
-    const N = 1 + Math.floor(rng.uniform() * 7);
-    for (let i = 0; i < N; i++) {
-      // Random offset within the hex inradius.
-      const ang = rng.uniform() * Math.PI * 2;
-      const rad = Math.sqrt(rng.uniform()) * HEX_SIZE * 0.55;
-      const px = center.x + Math.cos(ang) * rad;
-      const py = center.y + Math.sin(ang) * rad;
-      // Varying sizes — wide range from small foothills to dominant peaks.
-      const sizeT = rng.uniform();
-      const width = HEX_SIZE * (0.40 + sizeT * 0.70);
-      const height = HEX_SIZE * (0.55 + sizeT * 0.95) * (0.9 + rng.uniform() * 0.25);
-      peaks.push({ x: px, y: py, width, height, rng });
+  // Flatten river centerlines into a point list for collision checks. Hills
+  // try not to cross rivers — proposed positions whose arch bbox contains a
+  // river point are rejected and re-sampled.
+  const riverPts = [];
+  if (opts.rivers) {
+    for (const r of opts.rivers) {
+      if (!r || !r.points) continue;
+      for (const p of r.points) riverPts.push(p);
     }
   }
-  // Back-to-front: peaks with a higher base Y are nearer to the viewer and
-  // drawn last so their fill occludes peaks behind them.
-  peaks.sort((a, b) => (a.y + a.height * 0.45) - (b.y + b.height * 0.45));
-  for (const p of peaks) drawMountainPeak(ctx, p, p.rng, fillColor, lineColor);
+  const RIVER_CLEAR = HEX_SIZE * 0.18;
+  const crossesRiver = (cx, cy, halfW, hillHeight) => {
+    if (riverPts.length === 0) return false;
+    const xMin = cx - halfW - RIVER_CLEAR;
+    const xMax = cx + halfW + RIVER_CLEAR;
+    const yMin = cy - hillHeight - RIVER_CLEAR;
+    const yMax = cy + RIVER_CLEAR;
+    for (let i = 0; i < riverPts.length; i++) {
+      const p = riverPts[i];
+      if (p.x >= xMin && p.x <= xMax && p.y >= yMin && p.y <= yMax) return true;
+    }
+    return false;
+  };
+
+  // Build one single-hump arch hill at a given center+size.
+  function makeHill(rng, px, baseY, hillWidth, hillHeight) {
+    const leftBaseX = px - hillWidth * 0.5;
+    const rightBaseX = px + hillWidth * 0.5;
+    const tipDipL = hillHeight * (0.05 + rng.uniform() * 0.12);
+    const tipDipR = hillHeight * (0.05 + rng.uniform() * 0.12);
+    const apexBias = (rng.uniform() - 0.5) * 0.5;
+    const innerCount = 2;
+
+    const points = [];
+    points.push({ x: leftBaseX, y: baseY + tipDipL });
+    for (let k = 0; k < innerCount; k++) {
+      const tFrac = (k + 1) / (innerCount + 1);
+      const x = leftBaseX + (tFrac + apexBias * (1 - Math.abs(2*tFrac - 1)) * 0.6) * hillWidth;
+      let yFrac = Math.sin(tFrac * Math.PI);
+      yFrac *= 0.92 + rng.uniform() * 0.16;
+      const y = baseY - hillHeight * yFrac;
+      points.push({ x, y });
+    }
+    points.push({ x: rightBaseX, y: baseY + tipDipR });
+    return { leftBaseX, rightBaseX, points, rng, fillColor, sortKey: baseY };
+  }
+
+  const hills = [];
+  for (const h of hillHexes) {
+    const center = hexCenter(h.r, h.c, opts);
+    const rng = createRng((((seed + h.r * 73856093) ^ (h.c * 19349663)) ^ 0x4117C0DE) >>> 0);
+    const roll = rng.uniform();
+    const count = roll < 0.15 ? 1 : roll < 0.60 ? 2 : roll < 0.90 ? 3 : 4;
+
+    for (let i = 0; i < count; i++) {
+      const widthSkew = Math.pow(rng.uniform(), 1.3);
+      const hillWidth = HEX_SIZE * (0.55 + widthSkew * 0.55);
+      const hillHeight = HEX_SIZE * 0.10 + hillWidth * 0.20;
+
+      // Retry placement up to 6 times to find a spot that doesn't cross a
+      // river. Hills with no clear spot are dropped (river runs through the
+      // hex with no room on either side).
+      let px = 0, baseY = 0, placed = false;
+      for (let attempt = 0; attempt < 6; attempt++) {
+        px = center.x + (rng.uniform() - 0.5) * HEX_SIZE * 3.0;
+        baseY = center.y + (rng.uniform() - 0.5) * HEX_SIZE * 2.4;
+        if (!crossesRiver(px, baseY, hillWidth * 0.5, hillHeight)) {
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) continue;
+
+      const primary = makeHill(rng, px, baseY, hillWidth, hillHeight);
+      hills.push(primary);
+
+      // ~18% chance: spawn an overlapping companion hill. Its left tail
+      // tucks under/behind the primary's right slope so the pair reads as
+      // two overlapping arches — matches hills-double.png reference.
+      if (rng.uniform() < 0.18) {
+        const buddyWidth = hillWidth * (0.85 + rng.uniform() * 0.40);
+        const buddyHeight = HEX_SIZE * 0.10 + buddyWidth * 0.20;
+        const overlapFrac = 0.30 + rng.uniform() * 0.25;
+        const buddyLeftBase = primary.leftBaseX + hillWidth * overlapFrac;
+        const buddyPx = buddyLeftBase + buddyWidth * 0.5;
+        const buddyBaseY = baseY + (rng.uniform() - 0.3) * hillHeight * 0.35;
+        if (!crossesRiver(buddyPx, buddyBaseY, buddyWidth * 0.5, buddyHeight)) {
+          const buddy = makeHill(rng, buddyPx, buddyBaseY, buddyWidth, buddyHeight);
+          buddy.sortKey = primary.sortKey + 0.5;
+          hills.push(buddy);
+        }
+      }
+    }
+  }
+
+  // Back-to-front so nearer hills occlude farther ones.
+  hills.sort((a, b) => a.sortKey - b.sortKey);
+  for (const h of hills) {
+    drawHillBump(ctx, h, lineColor);
+  }
+}
+
+// ============================================================
+// GRASS (plains biome)
+// ============================================================
+// One grass tuft: 3-5 tapered leaves splaying upward from a base point.
+// Each leaf is a filled lens shape — base-left → tip → base-right via two
+// quadratic curves, matching the brushy silhouette in Grass.png.
+function drawGrassTuft(ctx, cx, baseY, size, rng) {
+  const leafCount = 3 + Math.floor(rng.uniform() * 3); // 3-5 leaves
+  const fanSpread = 70 + rng.uniform() * 30; // total fan arc in degrees
+  for (let i = 0; i < leafCount; i++) {
+    const t = leafCount === 1 ? 0.5 : i / (leafCount - 1);
+    const angleDeg = -fanSpread / 2 + t * fanSpread + (rng.uniform() - 0.5) * 8;
+    const angle = angleDeg * Math.PI / 180;
+    const len = size * (0.85 + rng.uniform() * 0.30);
+    const halfBase = size * (0.10 + rng.uniform() * 0.05);
+    // Tip points along angle (0° = straight up).
+    const tipX = cx + Math.sin(angle) * len;
+    const tipY = baseY - Math.cos(angle) * len;
+    // Perpendicular to leaf axis, for base width.
+    const perpX = Math.cos(angle);
+    const perpY = Math.sin(angle);
+    const blX = cx - perpX * halfBase;
+    const blY = baseY - perpY * halfBase;
+    const brX = cx + perpX * halfBase;
+    const brY = baseY + perpY * halfBase;
+    // Control points push out at mid-leaf to give a slight belly.
+    const bellyOut = halfBase * 1.4;
+    const midX = (cx + tipX) / 2;
+    const midY = (baseY + tipY) / 2;
+    const cpLx = midX - perpX * bellyOut;
+    const cpLy = midY - perpY * bellyOut;
+    const cpRx = midX + perpX * bellyOut;
+    const cpRy = midY + perpY * bellyOut;
+    ctx.beginPath();
+    ctx.moveTo(blX, blY);
+    ctx.quadraticCurveTo(cpLx, cpLy, tipX, tipY);
+    ctx.quadraticCurveTo(cpRx, cpRy, brX, brY);
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
+// Sprinkle grass tufts across all plains-biome hexes. Drawn AFTER the ink
+// threshold pass so tufts sit on top of grid lines like hills do.
+function drawGrass(canvas, plainsHexes, opts = {}) {
+  if (!plainsHexes || plainsHexes.length === 0) return;
+  const ctx = canvas.getContext('2d');
+  const seed = opts.seed ?? 0;
+  const lineColor = opts.lineColor ?? '#2a2015';
+
+  // River avoidance — tufts inside a river's swept area get dropped.
+  const riverPts = [];
+  if (opts.rivers) {
+    for (const r of opts.rivers) {
+      if (!r || !r.points) continue;
+      for (const p of r.points) riverPts.push(p);
+    }
+  }
+  const RIVER_CLEAR = HEX_SIZE * 0.22;
+  const nearRiver = (x, y) => {
+    if (riverPts.length === 0) return false;
+    for (let i = 0; i < riverPts.length; i++) {
+      const p = riverPts[i];
+      const dx = p.x - x, dy = p.y - y;
+      if (dx * dx + dy * dy < RIVER_CLEAR * RIVER_CLEAR) return true;
+    }
+    return false;
+  };
+
+  ctx.fillStyle = lineColor;
+
+  for (const h of plainsHexes) {
+    const center = hexCenter(h.r, h.c, opts);
+    const rng = createRng((((seed + h.r * 374761393) ^ (h.c * 668265263)) ^ 0x6757A55F) >>> 0);
+    const tuftCount = 2 + Math.floor(rng.uniform() * 2); // 2-3 tufts/hex
+    for (let i = 0; i < tuftCount; i++) {
+      // Sample inside an inscribed-circle radius so tufts stay clear of edges.
+      const rRadius = HEX_SIZE * 0.70 * Math.sqrt(rng.uniform());
+      const rTheta = rng.uniform() * Math.PI * 2;
+      const x = center.x + Math.cos(rTheta) * rRadius;
+      const y = center.y + Math.sin(rTheta) * rRadius;
+      if (nearRiver(x, y)) continue;
+      const size = HEX_SIZE * (0.15 + rng.uniform() * 0.08);
+      drawGrassTuft(ctx, x, y, size, rng);
+    }
+  }
 }
 
 // ============================================================
@@ -2346,10 +2709,13 @@ function renderMap(opts = {}) {
   // parchment output (post-threshold) so they can fill with parchment color
   // and properly occlude rivers, grid, and each other.
   const mountainHexes = [];
+  const hillHexes = [];
+  const plainsHexes = [];
   for (const [key, tag] of biomesOut.tags) {
-    if (tag !== 'mountains') continue;
     const [r, c] = key.split(',').map(Number);
-    mountainHexes.push({ r, c });
+    if (tag === 'mountains') mountainHexes.push({ r, c });
+    else if (tag === 'hills') hillHexes.push({ r, c });
+    else if (tag === 'plains') plainsHexes.push({ r, c });
   }
 
   // Threshold hi-res to binary mask: dark pixels stay opaque dark, rest → transparent.
@@ -2374,6 +2740,12 @@ function renderMap(opts = {}) {
 
   // Mountains: drawn directly on parchment after the composite so their fill
   // (parchment-colored) occludes rivers, grid lines, and earlier peaks.
+  if (plainsHexes.length > 0) {
+    drawGrass(out, plainsHexes, { ...gridOpts, seed, rivers });
+  }
+  if (hillHexes.length > 0) {
+    drawHills(out, hillHexes, { ...gridOpts, seed, rivers });
+  }
   if (mountainHexes.length > 0) {
     drawMountains(out, mountainHexes, { ...gridOpts, seed });
   }
@@ -2476,5 +2848,5 @@ module.exports = {
   // ocean
   pickSides, selectWaterHexes, buildCoastlineSegments, stitchSegments, drawOcean,
   // rendering
-  drawRiver, drawHexGrid, paintParchment, renderMap, drawMountains,
+  drawRiver, drawHexGrid, paintParchment, renderMap, drawMountains, drawHills,
 };
