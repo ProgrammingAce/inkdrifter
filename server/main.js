@@ -7,6 +7,20 @@ const { renderQueue } = require('./mapRender.js');
 const { LobbyManager } = require('./lobbyManager.js');
 const { hexNeighbors, MIN_GRID, MAX_GRID } = require('./lobby.js');
 const { EVENTS, ERROR_CODES } = require('./protocol.js');
+const {
+  HEX_SIZE, HEX_W, HEX_H,
+  DEFAULT_GRID_ORIGIN_X, DEFAULT_GRID_ORIGIN_Y,
+} = require('../index.js');
+
+const HEX_CONSTANTS_JS = [
+  `export const HEX_SIZE = ${HEX_SIZE};`,
+  `export const HEX_W = ${HEX_W};`,
+  `export const HEX_H = ${HEX_H};`,
+  `export const DEFAULT_GRID_ORIGIN_X = ${DEFAULT_GRID_ORIGIN_X};`,
+  `export const DEFAULT_GRID_ORIGIN_Y = ${DEFAULT_GRID_ORIGIN_Y};`,
+  `export const MIN_GRID = ${MIN_GRID};`,
+  `export const MAX_GRID = ${MAX_GRID};`,
+].join('\n') + '\n';
 
 const PORT = process.env.PORT || 3000;
 const ORIGIN = process.env.ORIGIN || false;
@@ -21,6 +35,15 @@ const io = new Server(httpServer, {
 const manager = new LobbyManager(io);
 
 app.use(express.json({ limit: '4kb' }));
+
+// Single-source hex constants for the client (generated from index.js).
+// Must be registered before express.static so it wins over any stale file.
+app.get('/js/hex-constants.js', (req, res) => {
+  res.set('Content-Type', 'application/javascript');
+  res.set('Cache-Control', 'no-cache');
+  res.send(HEX_CONSTANTS_JS);
+});
+
 app.use(express.static(path.join(__dirname, '..', 'web')));
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -50,101 +73,90 @@ function emitError(socket, code, message) {
   socket.emit(EVENTS.ERROR, { code, message });
 }
 
+// Kick off a render, then update the lobby and notify clients. onReady runs
+// after pngBuffer is attached, before broadcastLobbyState — use it for
+// import state loading or other per-call hooks.
+function enqueueRender(code, { onReady, errorLabel = 'Render' } = {}) {
+  const lobby = manager.getLobby(code);
+  if (!lobby) return;
+  renderQueue.render(lobby.seed, lobby.rows, lobby.cols).then(pngBuffer => {
+    const l = manager.getLobby(code);
+    if (!l) return;
+    l.setReady(pngBuffer);
+    if (onReady) onReady(l);
+    io.to(code).emit(EVENTS.MAP_READY, {});
+    broadcastLobbyState(code);
+  }).catch(err => {
+    console.error(`${errorLabel} failed for lobby`, code, err);
+    manager.destroyLobby(code, 'render_failed');
+  });
+}
+
+function parseGridParams(req) {
+  const rows = parseInt(req.body.rows, 10);
+  const cols = parseInt(req.body.cols, 10);
+  if (isNaN(rows) || rows < MIN_GRID || rows > MAX_GRID) return { error: 'bad_rows' };
+  if (isNaN(cols) || cols < MIN_GRID || cols > MAX_GRID) return { error: 'bad_cols' };
+  return { rows, cols };
+}
+
+function parseSeed(raw, { required = false } = {}) {
+  if (raw == null || raw === '') {
+    return required ? { error: 'bad_seed' } : { seed: crypto.randomInt(0, 2 ** 32) };
+  }
+  const seed = parseInt(raw, 10);
+  if (isNaN(seed) || seed < 0 || seed > 0xFFFFFFFF) return { error: 'bad_seed' };
+  return { seed };
+}
+
+function lobbyCreatedResponse(lobby) {
+  return {
+    code: lobby.code,
+    seed: lobby.seed,
+    rows: lobby.rows,
+    cols: lobby.cols,
+    status: lobby.status,
+    hostToken: lobby.hostToken,
+  };
+}
+
 // ── HTTP Routes ───────────────────────────────────────────────────────────────
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, lobbies: manager.lobbies.size });
 });
 
-app.post('/api/lobbies/import', async (req, res) => {
-  const { hostName, status, fog, marker, revealedTiles } = req.body;
-  let rows = parseInt(req.body.rows, 10);
-  let cols = parseInt(req.body.cols, 10);
-  let seed = parseInt(req.body.seed, 10);
-  const name = sanitizeName(hostName);
+async function createLobbyAndRender(req, res, { onReady, errorLabel, requireSeed = false }) {
+  const name = sanitizeName(req.body.hostName);
   if (!name) return res.status(400).json({ error: 'bad_host_name' });
-  if (isNaN(rows) || rows < MIN_GRID || rows > MAX_GRID) return res.status(400).json({ error: 'bad_rows' });
-  if (isNaN(cols) || cols < MIN_GRID || cols > MAX_GRID) return res.status(400).json({ error: 'bad_cols' });
-  if (isNaN(seed) || seed < 0 || seed > 0xFFFFFFFF) return res.status(400).json({ error: 'bad_seed' });
+  const grid = parseGridParams(req);
+  if (grid.error) return res.status(400).json({ error: grid.error });
+  const s = parseSeed(req.body.seed, { required: requireSeed });
+  if (s.error) return res.status(400).json({ error: s.error });
 
   let lobby;
   try {
-    lobby = await manager.createLobby({ rows, cols, seed, hostName: name });
+    lobby = await manager.createLobby({ rows: grid.rows, cols: grid.cols, seed: s.seed, hostName: name });
   } catch (e) {
     if (e.code === 503) return res.status(503).json({ error: 'code_exhausted' });
     throw e;
   }
 
-  res.status(202).json({
-    code: lobby.code,
-    seed: lobby.seed,
-    rows: lobby.rows,
-    cols: lobby.cols,
-    status: lobby.status,
-    hostToken: lobby.hostToken,
-  });
+  res.status(202).json(lobbyCreatedResponse(lobby));
+  enqueueRender(lobby.code, { onReady, errorLabel });
+}
 
-  renderQueue.render(seed, rows, cols).then(pngBuffer => {
-    const l = manager.getLobby(lobby.code);
-    if (!l) return;
-    l.setReady(pngBuffer);
-    l.loadImportState({ status, fog, marker, revealedTiles });
-    io.to(lobby.code).emit(EVENTS.MAP_READY, {});
-    broadcastLobbyState(lobby.code);
-  }).catch(err => {
-    console.error('Import render failed for lobby', lobby.code, err);
-    manager.destroyLobby(lobby.code, 'render_failed');
+app.post('/api/lobbies/import', (req, res) => {
+  const { status, fog, marker, revealedTiles } = req.body;
+  return createLobbyAndRender(req, res, {
+    errorLabel: 'Import render',
+    requireSeed: true,
+    onReady: (l) => l.loadImportState({ status, fog, marker, revealedTiles }),
   });
 });
 
-app.post('/api/lobbies', async (req, res) => {
-  const { hostName, seed: seedRaw } = req.body;
-  let { rows, cols } = req.body;
-
-  const name = sanitizeName(hostName);
-  if (!name) return res.status(400).json({ error: 'bad_host_name' });
-
-  rows = parseInt(rows, 10);
-  cols = parseInt(cols, 10);
-  if (isNaN(rows) || rows < MIN_GRID || rows > MAX_GRID) return res.status(400).json({ error: 'bad_rows' });
-  if (isNaN(cols) || cols < MIN_GRID || cols > MAX_GRID) return res.status(400).json({ error: 'bad_cols' });
-
-  let seed;
-  if (seedRaw == null || seedRaw === '') {
-    seed = crypto.randomInt(0, 2 ** 32);
-  } else {
-    seed = parseInt(seedRaw, 10);
-    if (isNaN(seed) || seed < 0 || seed > 0xFFFFFFFF) return res.status(400).json({ error: 'bad_seed' });
-  }
-
-  let lobby;
-  try {
-    lobby = await manager.createLobby({ rows, cols, seed, hostName: name });
-  } catch (e) {
-    if (e.code === 503) return res.status(503).json({ error: 'code_exhausted' });
-    throw e;
-  }
-
-  res.status(202).json({
-    code: lobby.code,
-    seed: lobby.seed,
-    rows: lobby.rows,
-    cols: lobby.cols,
-    status: lobby.status,
-    hostToken: lobby.hostToken,
-  });
-
-  // Kick off render in worker
-  renderQueue.render(seed, rows, cols).then(pngBuffer => {
-    const l = manager.getLobby(lobby.code);
-    if (!l) return;
-    l.setReady(pngBuffer);
-    io.to(lobby.code).emit(EVENTS.MAP_READY, {});
-    broadcastLobbyState(lobby.code);
-  }).catch(err => {
-    console.error('Render failed for lobby', lobby.code, err);
-    manager.destroyLobby(lobby.code, 'render_failed');
-  });
+app.post('/api/lobbies', (req, res) => {
+  return createLobbyAndRender(req, res, { errorLabel: 'Render' });
 });
 
 app.post('/api/lobbies/:code/join', (req, res) => {
@@ -193,34 +205,6 @@ app.get('/api/lobbies/:code', (req, res) => {
     status: lobby.status,
     hostName: lobby.hostName,
   });
-});
-
-app.post('/api/lobbies/:code/regenerate', async (req, res) => {
-  const { code } = req.params;
-  const lobby = manager.getLobby(code);
-  if (!lobby) return res.status(404).json({ error: 'no_such_lobby' });
-  if (lobby.status !== 'preview') return res.status(409).json({ error: 'not_preview' });
-  lobby.regenerate();
-  renderQueue.render(lobby.seed, lobby.rows, lobby.cols).then(pngBuffer => {
-    lobby.pngBuffer = pngBuffer;
-    lobby.status = 'preview';
-    io.to(code).emit(EVENTS.MAP_READY, {});
-    broadcastLobbyState(code);
-  }).catch(err => {
-    console.error('Regenerate failed for lobby', code, err);
-    manager.destroyLobby(code, 'render_failed');
-  });
-  res.json({ ok: true });
-});
-
-app.post('/api/lobbies/:code/start', (req, res) => {
-  const { code } = req.params;
-  const lobby = manager.getLobby(code);
-  if (!lobby) return res.status(404).json({ error: 'no_such_lobby' });
-  if (lobby.status !== 'preview') return res.status(409).json({ error: 'lobby_not_preview' });
-  lobby.startGame();
-  broadcastLobbyState(code);
-  res.json({ ok: true });
 });
 
 // Serve lobby.html for /lobby/:code routes
@@ -370,7 +354,7 @@ io.on('connection', (socket) => {
     io.to(lobby.code).emit(EVENTS.REQUEST_CANCELLED, { requestId, reason: 'acknowledged' });
   });
 
- socket.on(EVENTS.NEW_GAME, () => {
+  socket.on(EVENTS.NEW_GAME, () => {
     if (!socket.data.authenticated || !socket.data.isHost) return;
     manager.destroyLobby(socket.data.lobbyCode, 'new_game');
   });
@@ -384,22 +368,14 @@ io.on('connection', (socket) => {
     broadcastLobbyState(socket.data.lobbyCode);
   });
 
-socket.on(EVENTS.REGENERATE_MAP, () => {
+  socket.on(EVENTS.REGENERATE_MAP, () => {
     if (!socket.data.authenticated || !socket.data.isHost) return;
     const lobby = manager.getLobby(socket.data.lobbyCode);
     if (!lobby) return;
     if (lobby.status !== 'preview') return;
     lobby.regenerate();
     io.to(lobby.code).emit(EVENTS.LOBBY_STATE, lobby.toWire('host', null));
-    renderQueue.render(lobby.seed, lobby.rows, lobby.cols).then(pngBuffer => {
-      lobby.pngBuffer = pngBuffer;
-      lobby.status = 'preview';
-      io.to(lobby.code).emit(EVENTS.MAP_READY, {});
-      broadcastLobbyState(lobby.code);
-    }).catch(err => {
-      console.error('Regenerate failed for lobby', lobby.code, err);
-      manager.destroyLobby(lobby.code, 'render_failed');
-    });
+    enqueueRender(lobby.code, { errorLabel: 'Regenerate' });
   });
 
   socket.on('disconnect', () => {

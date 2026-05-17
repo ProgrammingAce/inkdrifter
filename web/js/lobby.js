@@ -1,6 +1,7 @@
 import { EVENTS, ERROR_CODES, createSocket } from './socket.js';
 import { loadBaseMap, startRenderLoop } from './render.js';
 import { initInput, scrollToMarker } from './input.js';
+import { hexCenter } from './hex.js';
 
 const code = window.location.pathname.split('/').pop();
 const hostToken = localStorage.getItem(`hostToken_${code}`);
@@ -333,7 +334,7 @@ socket.on(EVENTS.MARKER_MOVED, ({ row, col, revealedDelta }) => {
   if (!isHost && previousMarker) {
     const container = document.getElementById('map-scroll');
     if (container) {
-      const oldCenter = { x: previousMarker.col * 93 + state.originX, y: previousMarker.row * 81 + state.originY };
+      const oldCenter = hexCenter(previousMarker.row, previousMarker.col, state.originX, state.originY);
       const scrollLeft = container.scrollLeft;
       const scrollTop = container.scrollTop;
       const right = scrollLeft + container.clientWidth;

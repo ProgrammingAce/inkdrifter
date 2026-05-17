@@ -31,7 +31,7 @@ importFileInput.addEventListener('change', async (e) => {
       }
       createStatus.textContent = 'Importing…';
       createStatus.className = 'status-msg';
-      const hostName = document.getElementById('host-name').value.trim();
+      const hostName = hostNameInput.value.trim();
       const res = await fetch('/api/lobbies/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

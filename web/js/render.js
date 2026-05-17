@@ -139,26 +139,21 @@ export function renderOverlay(ctx, state, isHost, dragPos) {
   }
 }
 
-let _rafId = null;
-let _rafCtx = null;
-let _rafGetState = null;
-let _rafIsHost = null;
-let _rafGetDragPos = null;
+let _activeRafId = null;
 
 export function startRenderLoop(ctx, getState, isHost, getDragPos) {
-  _rafCtx = ctx;
-  _rafGetState = getState;
-  _rafIsHost = isHost;
-  _rafGetDragPos = getDragPos;
-  if (_rafId) cancelAnimationFrame(_rafId);
+  if (_activeRafId) cancelAnimationFrame(_activeRafId);
+  let rafId = null;
   function loop() {
-    const state = _rafGetState();
-    if (state) renderOverlay(_rafCtx, state, _rafIsHost(), _rafGetDragPos());
-    _rafId = requestAnimationFrame(loop);
+    const state = getState();
+    if (state) renderOverlay(ctx, state, isHost(), getDragPos());
+    rafId = requestAnimationFrame(loop);
+    _activeRafId = rafId;
   }
-  _rafId = requestAnimationFrame(loop);
+  rafId = requestAnimationFrame(loop);
+  _activeRafId = rafId;
 }
 
 export function stopRenderLoop() {
-  if (_rafId) { cancelAnimationFrame(_rafId); _rafId = null; }
+  if (_activeRafId) { cancelAnimationFrame(_activeRafId); _activeRafId = null; }
 }

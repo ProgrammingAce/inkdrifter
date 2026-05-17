@@ -1,8 +1,17 @@
-export const HEX_SIZE = 54;
-export const HEX_W = Math.sqrt(3) * HEX_SIZE;
-export const HEX_H = 2 * HEX_SIZE;
-export const DEFAULT_GRID_ORIGIN_X = 173;
-export const DEFAULT_GRID_ORIGIN_Y = 70;
+export {
+  HEX_SIZE,
+  HEX_W,
+  HEX_H,
+  DEFAULT_GRID_ORIGIN_X,
+  DEFAULT_GRID_ORIGIN_Y,
+} from './hex-constants.js';
+import {
+  HEX_SIZE,
+  HEX_W,
+  HEX_H,
+  DEFAULT_GRID_ORIGIN_X,
+  DEFAULT_GRID_ORIGIN_Y,
+} from './hex-constants.js';
 
 export function hexCenter(row, col, originX, originY) {
   const ox = originX ?? DEFAULT_GRID_ORIGIN_X;

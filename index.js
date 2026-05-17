@@ -1173,6 +1173,13 @@ function hexNeighbors(r, c) {
   return out;
 }
 
+function hexNeighborsBounded(row, col, rows, cols) {
+  const candidates = row % 2 === 0
+    ? [[row - 1, col - 1], [row - 1, col], [row, col - 1], [row, col + 1], [row + 1, col - 1], [row + 1, col]]
+    : [[row - 1, col], [row - 1, col + 1], [row, col - 1], [row, col + 1], [row + 1, col], [row + 1, col + 1]];
+  return candidates.filter(([r, c]) => r >= 0 && r < rows && c >= 0 && c < cols);
+}
+
 // Smooth a Map<"r,c", number> by averaging each hex with its in-set neighbors
 // (weights: center 1.0, neighbors 0.5). Hexes outside `inSet` are ignored.
 function smoothHexField(field, inSet, passes) {
@@ -3107,6 +3114,7 @@ const DEMO_VARIANTS = [
 
 function main() {
   const fs = require('fs');
+  const path = require('path');
   const cli = parseCliArgs(process.argv.slice(2));
   const explicit = cli.rows !== undefined || cli.cols !== undefined
     || cli.seed !== undefined || cli.seeds !== undefined || cli.outPath !== undefined;
@@ -3119,11 +3127,13 @@ function main() {
     runs = DEMO_VARIANTS.map(v => ({ ...v }));
   }
 
+  const outDir = path.join(__dirname, 'out');
+  fs.mkdirSync(outDir, { recursive: true });
   for (const r of runs) {
     const { canvas, ocean } = renderMap({ seed: r.seed, rows: r.rows, cols: r.cols });
     const tag = (r.rows && r.cols) ? `${r.rows}x${r.cols}_` : '';
     const filename = r.outPath
-      ?? `/Users/ace/code/inkdrifter/output_ocean_${tag}${r.seed}.png`;
+      ?? path.join(outDir, `output_ocean_${tag}${r.seed}.png`);
     fs.writeFileSync(filename, canvas.toBuffer('image/png'));
     const sidesStr = ocean ? ocean.sides.join('') || 'none' : 'n/a';
     const pct = ocean ? (ocean.waterFraction * 100).toFixed(1) : 'n/a';
@@ -3136,7 +3146,11 @@ if (require.main === module) main();
 module.exports = {
   // hex
   HEX_SIZE, HEX_W, HEX_H,
+  DEFAULT_GRID_ORIGIN_X, DEFAULT_GRID_ORIGIN_Y,
+  MIN_GRID, MAX_GRID,
+  gridCanvasSize,
   hexCenter, hexVertices, buildVertexGraph,
+  hexNeighbors, hexNeighborsBounded,
   // rng / math
   createRng, gaussianFilter1D, jitter, blotSignal, weightedChoice,
   // paths

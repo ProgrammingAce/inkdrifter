@@ -1,27 +1,13 @@
 const crypto = require('crypto');
-
-const HEX_SIZE = 54;
-const HEX_W = Math.sqrt(3) * HEX_SIZE;
-const HEX_H = 2 * HEX_SIZE;
-const DEFAULT_GRID_ORIGIN_X = 173;
-const DEFAULT_GRID_ORIGIN_Y = 70;
-const MIN_GRID = 6;
-const MAX_GRID = 50;
-
-function computeCanvasSize(rows, cols) {
-  const ox = DEFAULT_GRID_ORIGIN_X;
-  const oy = DEFAULT_GRID_ORIGIN_Y;
-  const rightExtent = ox + (cols - 1) * HEX_W + HEX_W;
-  const bottomExtent = oy + (rows - 1) * 0.75 * HEX_H + HEX_H / 2;
-  return { W: Math.ceil(rightExtent + 100), H: Math.ceil(bottomExtent + 12) };
-}
-
-function hexNeighbors(row, col, rows, cols) {
-  const candidates = row % 2 === 0
-    ? [[row - 1, col - 1], [row - 1, col], [row, col - 1], [row, col + 1], [row + 1, col - 1], [row + 1, col]]
-    : [[row - 1, col], [row - 1, col + 1], [row, col - 1], [row, col + 1], [row + 1, col], [row + 1, col + 1]];
-  return candidates.filter(([r, c]) => r >= 0 && r < rows && c >= 0 && c < cols);
-}
+const {
+  HEX_SIZE,
+  DEFAULT_GRID_ORIGIN_X,
+  DEFAULT_GRID_ORIGIN_Y,
+  MIN_GRID,
+  MAX_GRID,
+  gridCanvasSize,
+  hexNeighborsBounded: hexNeighbors,
+} = require('../index.js');
 
 class Lobby {
   constructor({ code, seed, rows, cols, hostToken, hostName }) {
@@ -29,7 +15,7 @@ class Lobby {
     this.seed = seed;
     this.rows = rows;
     this.cols = cols;
-    const { W, H } = computeCanvasSize(rows, cols);
+    const { W, H } = gridCanvasSize(rows, cols, DEFAULT_GRID_ORIGIN_X, DEFAULT_GRID_ORIGIN_Y);
     this.canvasWidth = W;
     this.canvasHeight = H;
     this.originX = DEFAULT_GRID_ORIGIN_X;
@@ -204,14 +190,26 @@ class Lobby {
     }
   }
 
-  toJSONExport() {
-    const revealed = Array.from(this.revealed).map(key => key.split(',').map(Number));
+  _revealedTiles() {
+    return Array.from(this.revealed).map(key => key.split(',').map(Number));
+  }
+
+  _playersWire() {
     const players = {};
     for (const [pid, p] of Object.entries(this.players)) {
       players[pid] = { name: p.name, connected: p.connected };
     }
-    const pendingRequests = Object.entries(this.pendingRequests)
+    return players;
+  }
+
+  _pendingRequestsWire({ sort = false } = {}) {
+    const list = Object.entries(this.pendingRequests)
       .map(([requestId, req]) => ({ requestId, ...req }));
+    if (sort) list.sort((a, b) => b.at - a.at);
+    return list;
+  }
+
+  toJSONExport() {
     return {
       code: this.code,
       seed: this.seed,
@@ -222,9 +220,9 @@ class Lobby {
       status: this.status,
       fog: { ...this.fog },
       marker: this.marker ? { ...this.marker } : null,
-      revealedTiles: revealed,
-      pendingRequests,
-      players,
+      revealedTiles: this._revealedTiles(),
+      pendingRequests: this._pendingRequestsWire(),
+      players: this._playersWire(),
       hostName: this.hostName,
       hostConnected: this.hostConnected,
       createdAt: this.createdAt,
@@ -236,14 +234,6 @@ class Lobby {
   }
 
   toWire(role, playerId) {
-    const revealed = Array.from(this.revealed).map(key => key.split(',').map(Number));
-    const pendingRequests = Object.entries(this.pendingRequests)
-      .map(([requestId, req]) => ({ requestId, ...req }))
-      .sort((a, b) => b.at - a.at);
-    const players = {};
-    for (const [pid, p] of Object.entries(this.players)) {
-      players[pid] = { name: p.name, connected: p.connected };
-    }
     const base = {
       code: this.code,
       seed: this.seed,
@@ -257,11 +247,11 @@ class Lobby {
       status: this.status,
       hostConnected: this.hostConnected,
       hostName: this.hostName,
-      players,
+      players: this._playersWire(),
       marker: this.marker,
-      revealed,
+      revealed: this._revealedTiles(),
       fog: this.fog,
-      pendingRequests,
+      pendingRequests: this._pendingRequestsWire({ sort: true }),
     };
     if (role === 'host') return { ...base, role: 'host' };
     return { ...base, role: 'player', playerId };
