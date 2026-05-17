@@ -2091,741 +2091,292 @@ function drawGrass(canvas, plainsHexes, opts = {}) {
 // ============================================================
 // CITIES (settlement biome)
 // ============================================================
-// Shared iso projection. `flip` is +1 (recedes back-right) or -1 (back-left).
-// Returns offsets (dx, dy) added to a "front" point to get the "back" point.
-const ISO_COS = 0.90; // ~26° receding angle
-const ISO_SIN = 0.45;
-function isoOffset(depth, flip) {
-  return { dx: depth * ISO_COS * flip, dy: depth * ISO_SIN };
-}
+// Each city hex draws a fortified castle compound: a row of 2-5 crenellated
+// towers with optional curtain walls and a central gatehouse. Tower heights
+// and roof types (pointed cone vs. crenellated flat top) vary per castle.
+// The map-wide "capital" (highest-scored city) is the only town to get a flag.
 
 function cityStroke() {
-  return Math.max(2.5, Math.min(5, HEX_SIZE * 0.090));
+  return Math.max(2.6, Math.min(5.2, HEX_SIZE * 0.095));
 }
 
-// Round (cylindrical) tower with a tall conical/spire roof — the classic
-// fantasy "wizard tower" silhouette. Distinct from drawTowerClassic, which
-// uses the Town.png-style battlemented U-top. Arched door + window on the
-// front face; elliptical rim at the cone eaves.
-function drawTower(ctx, cx, baseY, size, rng, lineColor, fillColor) {
-  const w = size * 0.85;
-  const h = size * (2.30 + rng.uniform() * 0.30);
-  const rimRx = w / 2;
-  const rimRy = w * 0.20; // perspective squash of the rim/eave ellipse
-  const roofH = h * (0.34 + rng.uniform() * 0.06); // tall spire on top
-  // wallTopY is where the cone sits on the wall (the cylinder's top rim).
-  const wallTopY = baseY - h + roofH;
-  const apexY = wallTopY - roofH;
-  const flare = w * 0.05;
-  const eaveOverhang = w * 0.04; // cone base extends slightly past the wall
-
-  const leftRim  = { x: cx - rimRx, y: wallTopY };
-  const rightRim = { x: cx + rimRx, y: wallTopY };
-  const leftEave  = { x: leftRim.x  - eaveOverhang, y: wallTopY };
-  const rightEave = { x: rightRim.x + eaveOverhang, y: wallTopY };
-  const leftBot  = { x: leftRim.x  - flare, y: baseY };
-  const rightBot = { x: rightRim.x + flare, y: baseY };
-
-  const stroke = cityStroke() * (0.92 + rng.uniform() * 0.16);
-  ctx.strokeStyle = lineColor;
-  ctx.fillStyle = fillColor;
-  ctx.lineWidth = stroke;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-
-  // ---- Body silhouette: left eave → up to apex → down to right eave →
-  // flared base → across → close. Cone sides replace the back-rim arc.
-  ctx.beginPath();
-  ctx.moveTo(leftEave.x, leftEave.y);
-  ctx.lineTo(cx, apexY);                  // up the LEFT side of the cone
-  ctx.lineTo(rightEave.x, rightEave.y);   // down the RIGHT side of the cone
-  ctx.lineTo(rightBot.x, rightBot.y);
-  ctx.lineTo(leftBot.x, leftBot.y);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-
-  // ---- Eave line: front half of the rim ellipse, drawn where the cone
-  // meets the cylinder wall. Reads as the overhang of the roof.
-  ctx.beginPath();
-  ctx.ellipse(cx, wallTopY, rimRx, rimRy, 0, 0, Math.PI, false);
-  ctx.stroke();
-
-  // ---- Small ball finial on the cone apex for a hand-drawn touch.
-  const finialR = Math.max(2, stroke * 0.8);
-  ctx.fillStyle = lineColor;
-  ctx.beginPath();
-  ctx.arc(cx, apexY, finialR, 0, Math.PI * 2);
-  ctx.fill();
-
-  // ---- Arched door at base of front face, with a stone arch frame outside
-  // the dark doorway (suggests the door is recessed into the wall) and a
-  // thin step at the base.
-  const doorW = w * 0.30;
-  const doorH = h * 0.30;
-  const doorLeft = cx - doorW / 2;
-  const doorRight = cx + doorW / 2;
-  const doorTop = baseY - doorH;
-
-  // Stone arch frame: stroked arch slightly larger than the doorway.
-  const frameOff = stroke * 0.9;
-  ctx.strokeStyle = lineColor;
-  ctx.beginPath();
-  ctx.moveTo(doorLeft - frameOff, baseY);
-  ctx.lineTo(doorLeft - frameOff, doorTop + doorW * 0.45 - frameOff);
-  ctx.quadraticCurveTo(doorLeft - frameOff, doorTop - frameOff, cx, doorTop - frameOff);
-  ctx.quadraticCurveTo(doorRight + frameOff, doorTop - frameOff, doorRight + frameOff, doorTop + doorW * 0.45 - frameOff);
-  ctx.lineTo(doorRight + frameOff, baseY);
-  ctx.stroke();
-
-  // Dark doorway.
-  ctx.fillStyle = lineColor;
-  ctx.beginPath();
-  ctx.moveTo(doorLeft, baseY);
-  ctx.lineTo(doorLeft, doorTop + doorW * 0.45);
-  ctx.quadraticCurveTo(doorLeft, doorTop, cx, doorTop);
-  ctx.quadraticCurveTo(doorRight, doorTop, doorRight, doorTop + doorW * 0.45);
-  ctx.lineTo(doorRight, baseY);
-  ctx.closePath();
-  ctx.fill();
-
-  // Stone step at the base.
-  const stepW = doorW * 1.45;
-  const stepH = Math.max(2, stroke * 0.7);
-  ctx.fillStyle = lineColor;
-  ctx.fillRect(cx - stepW / 2, baseY - stepH * 0.5, stepW, stepH);
-
-  // ---- Arched window halfway up the front wall.
-  const winW = w * 0.18;
-  const winH = h * 0.16;
-  const winBottom = wallTopY + (baseY - doorH - wallTopY) * 0.50;
-  const winTop = winBottom - winH;
-  ctx.beginPath();
-  ctx.moveTo(cx - winW / 2, winBottom);
-  ctx.lineTo(cx - winW / 2, winTop + winW * 0.45);
-  ctx.quadraticCurveTo(cx - winW / 2, winTop, cx, winTop);
-  ctx.quadraticCurveTo(cx + winW / 2, winTop, cx + winW / 2, winTop + winW * 0.45);
-  ctx.lineTo(cx + winW / 2, winBottom);
-  ctx.closePath();
-  ctx.fill();
+// Hand-drawn wobble: appends a slightly-bowed segment from current point to
+// (x2, y2). Midpoint is jittered perpendicular to the segment so straight
+// edges read as inked rather than ruled.
+function inkSeg(ctx, x1, y1, x2, y2, rng, amount) {
+  const dx = x2 - x1, dy = y2 - y1;
+  const len = Math.hypot(dx, dy) || 1;
+  // Perpendicular unit vector.
+  const px = -dy / len, py = dx / len;
+  const off = (rng.uniform() - 0.5) * amount;
+  const mx = (x1 + x2) / 2 + px * off;
+  const my = (y1 + y2) / 2 + py * off;
+  ctx.quadraticCurveTo(mx, my, x2, y2);
 }
 
-// Classic front-elevation tower matching Town.png bottom-left exactly:
-// rectangular body with a slight base flare and subtle hand-drawn wobble on
-// the sides, 2 wide merlons + 1 central gap on top, arched dark window
-// halfway up, and an arched dark door at the base with vertical wood-grain
-// hatching lines inside.
-function drawTowerClassic(ctx, cx, baseY, size, rng, lineColor, fillColor) {
-  const w = size * 0.85;
-  const h = size * (2.45 + rng.uniform() * 0.30);
-  // Merlon height tied to merlon width so each block reads as a chunky,
-  // roughly-square stone (matches Town.png reference proportions).
-  const merlonH = w * 0.30;
-  const merlonW = w * 0.32;
+// Draw one crenellated section: a rounded, plump body topped by dome-shaped
+// merlons (rounded bumps, not square teeth). Sides bow visibly outward,
+// base flares slightly, and the merlon tops are drawn with bezier domes
+// so the silhouette reads as obviously curved at every scale.
+function drawCrenelSection(ctx, cx, baseY, w, h, nMerlons, stroke, lineColor, fillColor, rng) {
+  const halfW = w / 2;
+  // Strong, visible bow — the previous values were too subtle to read.
+  const bulge = w * 0.10;
+  const flare = w * 0.07;
+  // Tall merlons so the battlements read clearly even at map scale.
+  const merlonH = Math.min(w * 0.42, h * 0.50);
   const wallTopY = baseY - h + merlonH;
   const merlonTopY = baseY - h;
+  const midY = (baseY + wallTopY) / 2;
 
-  // Pronounced base flare and visible hand-drawn wobble on the side outlines.
-  const flare = w * 0.10;
-  const midY = (wallTopY + baseY) / 2;
-  const wobble = w * 0.06;
-  const leftTop = cx - w / 2;
-  const leftBot = leftTop - flare;
-  const rightTop = cx + w / 2;
-  const rightBot = rightTop + flare;
-  const leftMidX = leftTop - wobble;   // bows out slightly
-  const rightMidX = rightTop + wobble;
-
-  const stroke = cityStroke() * (0.92 + rng.uniform() * 0.16);
   ctx.strokeStyle = lineColor;
   ctx.fillStyle = fillColor;
   ctx.lineWidth = stroke;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
-  // ---- Body silhouette: front face only (no iso side), traced clockwise.
-  // Left side bulges out via quadratic, then top is a flat wall (merlons
-  // drawn separately), then right side mirrors back down to flared base.
+  // Curved body — barrel sides, flared base, slightly domed top.
   ctx.beginPath();
-  ctx.moveTo(leftBot, baseY);
-  ctx.quadraticCurveTo(leftMidX, midY, leftTop, wallTopY);
-  ctx.lineTo(rightTop, wallTopY);
-  ctx.quadraticCurveTo(rightMidX, midY, rightBot, baseY);
+  ctx.moveTo(cx - halfW - flare, baseY);
+  ctx.quadraticCurveTo(cx - halfW - bulge, midY, cx - halfW, wallTopY);
+  ctx.quadraticCurveTo(cx, wallTopY - stroke * 0.5, cx + halfW, wallTopY);
+  ctx.quadraticCurveTo(cx + halfW + bulge, midY, cx + halfW + flare, baseY);
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
 
-  // ---- Battlements: two chunky rectangular merlons matching Town.png
-  // (one on each side, with a single wide central crenel between them).
-  const totalWallW = rightTop - leftTop;
-  const cMerlonW = totalWallW * 0.32;
-  ctx.fillStyle = fillColor;
-  for (const [x0, x1] of [
-    [leftTop,             leftTop + cMerlonW],
-    [rightTop - cMerlonW, rightTop],
-  ]) {
+  // Tombstone-shaped merlons: vertical stem with a rounded top. The stem
+  // keeps the gaps between merlons crisply rectangular (so they read as
+  // distinct teeth), while the rounded top preserves the hand-drawn feel.
+  const totalMerlonSpace = w * 1.0;
+  const slotW = totalMerlonSpace / (nMerlons * 2 - 1);
+  const startX = cx - totalMerlonSpace / 2;
+  // Cap = roundness of the top. Smaller than slotW/2 leaves a flat segment
+  // across the top of each merlon (more battlement-like, less bubble-like).
+  const cap = Math.min(slotW * 0.42, merlonH * 0.55);
+  for (let k = 0; k < nMerlons; k++) {
+    const x0 = startX + slotW * 2 * k;
+    const x1 = x0 + slotW;
     ctx.beginPath();
     ctx.moveTo(x0, wallTopY);
-    ctx.lineTo(x0, merlonTopY);
-    ctx.lineTo(x1, merlonTopY);
-    ctx.lineTo(x1, wallTopY);
+    ctx.lineTo(x0, merlonTopY + cap);          // straight left stem
+    ctx.quadraticCurveTo(x0, merlonTopY, x0 + cap, merlonTopY);  // round top-left
+    ctx.lineTo(x1 - cap, merlonTopY);          // flat top
+    ctx.quadraticCurveTo(x1, merlonTopY, x1, merlonTopY + cap);  // round top-right
+    ctx.lineTo(x1, wallTopY);                  // straight right stem
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
   }
-  // Parapet line across the central crenel (the back wall behind the gap).
-  ctx.beginPath();
-  ctx.moveTo(leftTop + cMerlonW, wallTopY);
-  ctx.lineTo(rightTop - cMerlonW, wallTopY);
-  ctx.stroke();
+}
 
-  // ---- Arched window: filled-dark arch centered on the wall, between the
-  // merlons and the door.
-  const winW = w * 0.22;
-  const winH = h * 0.18;
-  const winBottom = wallTopY + (baseY - wallTopY) * 0.42;
+// Side keep: a two-tier crenellated tower — wider lower section topped by
+// a narrower upper section, both crenellated. Matches the reference's
+// distinctive stacked-keep silhouette.
+function drawTwoTierKeep(ctx, cx, baseY, w, h, stroke, lineColor, fillColor, rng) {
+  const lowerH = h * 0.62;
+  const upperH = h * 0.42;
+  const upperW = w * 0.62;
+
+  // Lower wider tier (3 merlons).
+  drawCrenelSection(ctx, cx, baseY, w, lowerH, 3, stroke, lineColor, fillColor, rng);
+  // Upper narrower tier (2 merlons) sits on top of the lower wall-top.
+  // The slight `stroke * 0.5` overlap hides the seam so the two tiers read
+  // as one continuous shape.
+  const upperBaseY = baseY - lowerH + stroke * 0.5;
+  drawCrenelSection(ctx, cx, upperBaseY, upperW, upperH, 2, stroke, lineColor, fillColor, rng);
+
+  // Arched window on the lower tier's front face.
+  const winW = Math.max(stroke * 1.2, w * 0.18);
+  const winH = Math.max(stroke * 1.8, winW * 1.4);
+  const winBottom = baseY - lowerH * 0.32;
   const winTop = winBottom - winH;
   ctx.fillStyle = lineColor;
   ctx.beginPath();
   ctx.moveTo(cx - winW / 2, winBottom);
-  ctx.lineTo(cx - winW / 2, winTop + winW * 0.45);
+  ctx.lineTo(cx - winW / 2, winTop + winW * 0.5);
   ctx.quadraticCurveTo(cx - winW / 2, winTop, cx, winTop);
-  ctx.quadraticCurveTo(cx + winW / 2, winTop, cx + winW / 2, winTop + winW * 0.45);
+  ctx.quadraticCurveTo(cx + winW / 2, winTop, cx + winW / 2, winTop + winW * 0.5);
   ctx.lineTo(cx + winW / 2, winBottom);
   ctx.closePath();
   ctx.fill();
-
-  // ---- Arched door at the base — slim arched opening with a stone arch
-  // frame and a small step. Vertical "wood plank" hatching inside the dark
-  // door fills out the reference look.
-  const doorW = w * 0.30;
-  const doorH = h * 0.30;
-  const doorLeft = cx - doorW / 2;
-  const doorRight = cx + doorW / 2;
-  const doorTopY = baseY - doorH;
-
-  // Stone arch frame.
-  const frameOff = stroke * 0.9;
-  ctx.strokeStyle = lineColor;
-  ctx.beginPath();
-  ctx.moveTo(doorLeft - frameOff, baseY);
-  ctx.lineTo(doorLeft - frameOff, doorTopY + doorW * 0.40 - frameOff);
-  ctx.quadraticCurveTo(doorLeft - frameOff, doorTopY - frameOff, cx, doorTopY - frameOff);
-  ctx.quadraticCurveTo(doorRight + frameOff, doorTopY - frameOff, doorRight + frameOff, doorTopY + doorW * 0.40 - frameOff);
-  ctx.lineTo(doorRight + frameOff, baseY);
-  ctx.stroke();
-
-  // Dark doorway.
-  ctx.fillStyle = lineColor;
-  ctx.beginPath();
-  ctx.moveTo(doorLeft, baseY);
-  ctx.lineTo(doorLeft, doorTopY + doorW * 0.40);
-  ctx.quadraticCurveTo(doorLeft, doorTopY, cx, doorTopY);
-  ctx.quadraticCurveTo(doorRight, doorTopY, doorRight, doorTopY + doorW * 0.40);
-  ctx.lineTo(doorRight, baseY);
-  ctx.closePath();
-  ctx.fill();
-
-  // Vertical hatching inside the door — three thin parchment lines (the
-  // "wooden planks" of the reference). Clip to the door arch so lines stop
-  // at the curve.
-  ctx.save();
-  ctx.beginPath();
-  ctx.moveTo(doorLeft, baseY);
-  ctx.lineTo(doorLeft, doorTopY + doorW * 0.40);
-  ctx.quadraticCurveTo(doorLeft, doorTopY, cx, doorTopY);
-  ctx.quadraticCurveTo(doorRight, doorTopY, doorRight, doorTopY + doorW * 0.40);
-  ctx.lineTo(doorRight, baseY);
-  ctx.closePath();
-  ctx.clip();
-  ctx.strokeStyle = fillColor;
-  ctx.lineWidth = Math.max(1.5, stroke * 0.5);
-  ctx.lineCap = 'butt';
-  for (let k = 1; k <= 3; k++) {
-    const hx = doorLeft + (doorW * k) / 4;
-    ctx.beginPath();
-    ctx.moveTo(hx, baseY);
-    ctx.lineTo(hx, doorTopY + doorW * 0.10);
-    ctx.stroke();
-  }
-  ctx.restore();
-
-  // Stone step at the base.
-  const stepW = doorW * 1.45;
-  const stepH = Math.max(2, stroke * 0.7);
-  ctx.fillStyle = lineColor;
-  ctx.fillRect(cx - stepW / 2, baseY - stepH * 0.5, stepW, stepH);
+  ctx.fillStyle = fillColor;
 }
 
-// Gabled house in 3/4 iso view: front wall + receding side wall + front roof
-// slope (parallelogram) + visible side gable triangle. Door on front face;
-// `variant === 'large'` adds window slits and grows the footprint.
-function drawHouse(ctx, cx, baseY, size, rng, lineColor, fillColor, variant, townFlip) {
-  const sizeMul = variant === 'large' ? 1.2 : 1.0;
-  const w = size * sizeMul * (1.05 + rng.uniform() * 0.25);
-  const bodyH = size * sizeMul * (0.55 + rng.uniform() * 0.15);
-  const roofH = size * sizeMul * (0.45 + rng.uniform() * 0.15);
-  const depth = w * (0.55 + rng.uniform() * 0.20);
-  const flip = townFlip ?? (rng.uniform() < 0.5 ? -1 : 1);
-  const { dx, dy } = isoOffset(depth, flip);
+// Central spire: a thin crenellated tower topped by a tall curved cone.
+// This is the "standard-bearer" element — the capital's flag flies from its
+// apex.
+function drawCastleSpire(ctx, cx, baseY, w, h, stroke, lineColor, fillColor, rng) {
+  const towerH = h * 0.48;
+  const coneH = h * 0.55;
+  const halfW = w / 2;
 
-  // Front face corners.
-  const fl_b = { x: cx - w / 2, y: baseY };
-  const fr_b = { x: cx + w / 2, y: baseY };
-  const fl_t = { x: fl_b.x, y: baseY - bodyH };
-  const fr_t = { x: fr_b.x, y: baseY - bodyH };
-  // The receding side (back-right if flip>0, back-left otherwise).
-  const sideBotFront = flip > 0 ? fr_b : fl_b;
-  const sideTopFront = flip > 0 ? fr_t : fl_t;
-  const sideBotBack  = { x: sideBotFront.x + dx, y: sideBotFront.y - dy };
-  const sideTopBack  = { x: sideTopFront.x + dx, y: sideTopFront.y - dy };
-  // Roof: ridge runs left-right (parallel to front wall), centered above
-  // the front face. The ridge is a line from peakFront to peakBack.
-  const peakFront = { x: cx, y: fl_t.y - roofH };
-  const peakBack  = { x: peakFront.x + dx, y: peakFront.y - dy };
-  // The visible gable triangle (on the receding side) has corners:
-  //   sideTopFront, sideTopBack, and the ridge end at that side.
-  // The ridge end at this side is the peak at the back-side column (cx + 0).
-  // For a left-right ridge, both ends of the ridge sit at the same x
-  // (centered above the front face); but in iso, the BACK end is offset by
-  // dx, -dy. The visible gable's apex is therefore peakBack (back of ridge).
-  // Hmm, but for a 3/4 view of a left-right-ridge gable, the visible gable
-  // wall is *one of the end walls* of the building — and end walls exist
-  // only if the ridge has front-back length, i.e. ridge runs front-back.
-  // To simplify and match the chunky look of Town.png, we instead model the
-  // ridge as running FRONT-BACK: the building is gabled at front + back,
-  // and the visible roof plane is the receding (left or right) slope.
-  // Re-derive with ridge front-back:
-  // Front gable apex sits above the midpoint of front wall:
-  const frontGableApex = { x: cx, y: fl_t.y - roofH };
-  const backGableApex  = { x: frontGableApex.x + dx, y: frontGableApex.y - dy };
+  // Thin crenellated base (3 small merlons).
+  drawCrenelSection(ctx, cx, baseY, w, towerH, 3, stroke, lineColor, fillColor, rng);
 
-  const stroke = cityStroke() * (0.92 + rng.uniform() * 0.16);
+  // Tall pointed cone roof above the merlons.
+  const coneBaseY = baseY - towerH;
+  const coneApexY = coneBaseY - coneH;
+  const eaveOver = w * 0.08;
+
   ctx.strokeStyle = lineColor;
   ctx.fillStyle = fillColor;
   ctx.lineWidth = stroke;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-
-  // ---- Silhouette fill (front gable wall + receding side wall + far roof slope).
   ctx.beginPath();
-  ctx.moveTo(fl_b.x, fl_b.y);
-  ctx.lineTo(fl_t.x, fl_t.y);
-  ctx.lineTo(frontGableApex.x, frontGableApex.y);
-  ctx.lineTo(fr_t.x, fr_t.y);
-  ctx.lineTo(fr_b.x, fr_b.y);
-  // Recede along the receding-side bottom edge.
-  ctx.lineTo(sideBotBack.x, sideBotBack.y);
-  // Up the back wall (going up + receding).
-  ctx.lineTo(sideTopBack.x, sideTopBack.y);
-  // Up to the back gable apex (the receding side's far roof corner).
-  ctx.lineTo(backGableApex.x, backGableApex.y);
-  // Back across the ridge to the front apex.
-  ctx.lineTo(frontGableApex.x, frontGableApex.y);
+  ctx.moveTo(cx - halfW - eaveOver, coneBaseY);
+  // Bowed cone sides — shouldered curve into a soft point.
+  ctx.bezierCurveTo(
+    cx - halfW * 0.55, coneBaseY - coneH * 0.30,
+    cx - halfW * 0.08, coneApexY + coneH * 0.18,
+    cx, coneApexY
+  );
+  ctx.bezierCurveTo(
+    cx + halfW * 0.08, coneApexY + coneH * 0.18,
+    cx + halfW * 0.55, coneBaseY - coneH * 0.30,
+    cx + halfW + eaveOver, coneBaseY
+  );
   ctx.closePath();
   ctx.fill();
+  ctx.stroke();
+}
 
-  // ---- Outline the visible edges.
-  ctx.beginPath();
-  // Front gable wall outline (pentagon).
-  ctx.moveTo(fl_b.x, fl_b.y);
-  ctx.lineTo(fl_t.x, fl_t.y);
-  ctx.lineTo(frontGableApex.x, frontGableApex.y);
-  ctx.lineTo(fr_t.x, fr_t.y);
-  ctx.lineTo(fr_b.x, fr_b.y);
-  ctx.lineTo(fl_b.x, fl_b.y);
-  ctx.stroke();
-  // Receding side bottom edge.
-  ctx.beginPath();
-  ctx.moveTo(sideBotFront.x, sideBotFront.y);
-  ctx.lineTo(sideBotBack.x, sideBotBack.y);
-  ctx.stroke();
-  // Eave on the receding side (back wall top).
-  ctx.beginPath();
-  ctx.moveTo(sideTopFront.x, sideTopFront.y);
-  ctx.lineTo(sideTopBack.x, sideTopBack.y);
-  ctx.stroke();
-  // Side wall vertical: back-side bottom to back-side top.
-  ctx.beginPath();
-  ctx.moveTo(sideBotBack.x, sideBotBack.y);
-  ctx.lineTo(sideTopBack.x, sideTopBack.y);
-  ctx.stroke();
-  // Ridge: front apex → back apex.
-  ctx.beginPath();
-  ctx.moveTo(frontGableApex.x, frontGableApex.y);
-  ctx.lineTo(backGableApex.x, backGableApex.y);
-  ctx.stroke();
-  // Far roof slope edge: back gable apex down to back-side eave corner.
-  ctx.beginPath();
-  ctx.moveTo(backGableApex.x, backGableApex.y);
-  ctx.lineTo(sideTopBack.x, sideTopBack.y);
-  ctx.stroke();
+// Front gatehouse: short single-tier crenellated block with a wide arched
+// doorway. Sits slightly forward of the keep cluster.
+function drawGatehouse(ctx, cx, baseY, w, h, stroke, lineColor, fillColor, rng) {
+  drawCrenelSection(ctx, cx, baseY, w, h, 2, stroke, lineColor, fillColor, rng);
 
-  // ---- Roof hatch ticks on the visible roof slope (front apex → side eave).
-  const tickW = Math.max(2, Math.min(3.5, HEX_SIZE * 0.055));
-  ctx.lineWidth = tickW;
-  const tickCount = 2 + Math.floor(rng.uniform() * 2);
-  // Sample along the ridge midline of the visible roof plane.
-  for (let i = 0; i < tickCount; i++) {
-    const f = 0.25 + (i / Math.max(1, tickCount - 1)) * 0.50;
-    // Start point on the ridge (lerp front→back apex).
-    const rx = lerp1d(frontGableApex.x, backGableApex.x, f);
-    const ry = lerp1d(frontGableApex.y, backGableApex.y, f);
-    // End point on the side eave (lerp front-top→back-top of receding side).
-    const ex = lerp1d(sideTopFront.x, sideTopBack.x, f);
-    const ey = lerp1d(sideTopFront.y, sideTopBack.y, f);
-    // Draw short tick from ridge toward eave (~25% of the way).
-    const t = 0.55 + rng.uniform() * 0.20;
-    ctx.beginPath();
-    ctx.moveTo(rx + (ex - rx) * (t - 0.20), ry + (ey - ry) * (t - 0.20));
-    ctx.lineTo(rx + (ex - rx) * t,          ry + (ey - ry) * t);
-    ctx.stroke();
-  }
-  ctx.lineWidth = stroke;
-
-  // ---- Optional chimney: a small dark rectangle perched on the visible
-  // roof slope, ~40% chance for small houses, ~70% for large houses. Position
-  // is biased toward the back so it sits on the receding plane.
-  const chimneyChance = variant === 'large' ? 0.70 : 0.40;
-  if (rng.uniform() < chimneyChance) {
-    const chimW = w * 0.08;
-    const chimH = (variant === 'large' ? bodyH : bodyH) * 0.55;
-    // Sit chimney at fractional position along ridge (toward the back).
-    const t = 0.55 + rng.uniform() * 0.20;
-    const cxOnRidge = lerp1d(frontGableApex.x, backGableApex.x, t);
-    const cyOnRidge = lerp1d(frontGableApex.y, backGableApex.y, t);
-    ctx.fillStyle = lineColor;
-    // Body of chimney (dark rectangle rising straight up from the ridge).
-    ctx.beginPath();
-    ctx.rect(cxOnRidge - chimW / 2, cyOnRidge - chimH, chimW, chimH);
-    ctx.fill();
-    // Slightly wider cap on top.
-    const capW = chimW * 1.5;
-    const capH = chimH * 0.18;
-    ctx.beginPath();
-    ctx.rect(cxOnRidge - capW / 2, cyOnRidge - chimH - capH, capW, capH);
-    ctx.fill();
-  }
-
-  // ---- Door on the front face: tall arched-top filled rectangle.
+  // Wide arched door — fully blackened.
+  const doorW = w * 0.55;
+  const doorH = h * 0.62;
+  const dL = cx - doorW / 2, dR = cx + doorW / 2, dT = baseY - doorH;
   ctx.fillStyle = lineColor;
-  const doorW = w * 0.20;
-  const doorH = bodyH * 0.70;
-  const doorX = cx + (rng.uniform() - 0.5) * w * 0.18;
-  const doorLeft = doorX - doorW / 2;
-  const doorRight = doorX + doorW / 2;
-  const doorTopY = baseY - doorH;
   ctx.beginPath();
-  ctx.moveTo(doorLeft, baseY);
-  ctx.lineTo(doorLeft, doorTopY + doorW * 0.35);
-  ctx.quadraticCurveTo(doorLeft, doorTopY, doorX, doorTopY);
-  ctx.quadraticCurveTo(doorRight, doorTopY, doorRight, doorTopY + doorW * 0.35);
-  ctx.lineTo(doorRight, baseY);
+  ctx.moveTo(dL, baseY);
+  ctx.lineTo(dL, dT + doorW * 0.42);
+  ctx.quadraticCurveTo(dL, dT, cx, dT);
+  ctx.quadraticCurveTo(dR, dT, dR, dT + doorW * 0.42);
+  ctx.lineTo(dR, baseY);
   ctx.closePath();
   ctx.fill();
-
-  // ---- Window slits on the front wall (large variant only).
-  if (variant === 'large') {
-    const winH = bodyH * 0.28;
-    const winW = Math.max(1.8, stroke * 0.6);
-    const offsets = [-w * 0.30, w * 0.30];
-    for (const ox of offsets) {
-      const wx = cx + ox;
-      // Skip if overlapping the door region.
-      if (Math.abs(wx - doorX) < doorW * 0.6 + winW) continue;
-      ctx.fillRect(wx - winW / 2, baseY - bodyH * 0.65, winW, winH);
-    }
-  }
-}
-
-// Local helper (kept inline to avoid polluting the module surface).
-function lerp1d(a, b, t) { return a + (b - a) * t; }
-
-// Market pavilion / tent: pyramidal canopy with crisp straight-edged panels
-// meeting at the apex, sitting clearly above 4 visible legs, with a small
-// scalloped banner hanging between the front legs. Matches Town.png top-left.
-function drawTent(ctx, cx, baseY, size, rng, lineColor, fillColor, townFlip) {
-  // Tents are smaller than houses — closer to a single market stall.
-  const w = size * (0.75 + rng.uniform() * 0.15);
-  const legH = size * (0.65 + rng.uniform() * 0.15);
-  const canopyH = size * (0.40 + rng.uniform() * 0.10);
-  const depth = w * (0.45 + rng.uniform() * 0.10);
-  const flip = townFlip ?? (rng.uniform() < 0.5 ? -1 : 1);
-  const { dx, dy } = isoOffset(depth, flip);
-
-  // Leg attachment points (canopy corners sit on these 4 leg tops).
-  const flT = { x: cx - w / 2, y: baseY - legH };
-  const frT = { x: cx + w / 2, y: baseY - legH };
-  const blT = { x: flT.x + dx, y: flT.y - dy };
-  const brT = { x: frT.x + dx, y: frT.y - dy };
-  // Apex centered above the parallelogram of leg tops.
-  const peak = {
-    x: (flT.x + frT.x + blT.x + brT.x) / 4,
-    y: (flT.y + frT.y + blT.y + brT.y) / 4 - canopyH,
-  };
-
-  const stroke = cityStroke() * (0.92 + rng.uniform() * 0.16);
-  ctx.strokeStyle = lineColor;
   ctx.fillStyle = fillColor;
-  ctx.lineWidth = stroke;
+}
+
+// Single-streamer pennant on a thin pole rising from a spire apex. `flip`
+// controls which side the flag streams.
+function drawFlag(ctx, cx, apexY, size, flip, stroke, lineColor, fillColor, rng) {
+  const poleH = size * 0.85;
+  const poleTopY = apexY - poleH;
+  ctx.strokeStyle = lineColor;
+  ctx.lineWidth = Math.max(1.6, stroke * 0.7);
   ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-
-  // ---- Legs first, so the canopy fill cleanly caps them.
-  for (const top of [blT, brT, flT, frT]) {
-    ctx.beginPath();
-    ctx.moveTo(top.x, top.y);
-    ctx.lineTo(top.x, baseY);
-    ctx.stroke();
-  }
-
-  // ---- Canopy silhouette: 4-sided pyramid. From a 3/4 view the visible
-  // outline is a quadrilateral through fl → fr → br → apex → close, with
-  // the front+right panels shared edge (frT→apex) drawn as an interior crease.
-  // Picking the visible side based on the iso flip.
-  const visibleBackCorner = flip > 0 ? brT : blT;
-  const visibleFrontCorner = flip > 0 ? frT : flT;
-  const hiddenFrontCorner = flip > 0 ? flT : frT;
   ctx.beginPath();
-  ctx.moveTo(hiddenFrontCorner.x, hiddenFrontCorner.y);
-  ctx.lineTo(visibleFrontCorner.x, visibleFrontCorner.y);
-  ctx.lineTo(visibleBackCorner.x, visibleBackCorner.y);
-  ctx.lineTo(peak.x, peak.y);
+  ctx.moveTo(cx, apexY);
+  inkSeg(ctx, cx, apexY, cx, poleTopY, rng, stroke * 0.3);
+  ctx.stroke();
+
+  const flagLen = size * 0.70 * flip;
+  const flagH = size * 0.36;
+  ctx.lineWidth = stroke;
+  ctx.fillStyle = fillColor;
+  ctx.beginPath();
+  ctx.moveTo(cx, poleTopY);
+  ctx.lineTo(cx + flagLen, poleTopY + flagH * 0.28);
+  ctx.lineTo(cx + flagLen * 0.55, poleTopY + flagH * 0.55);
+  ctx.lineTo(cx + flagLen, poleTopY + flagH * 0.82);
+  ctx.lineTo(cx, poleTopY + flagH);
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
-
-  // Interior crease: shared edge between the front panel and the side panel.
-  ctx.beginPath();
-  ctx.moveTo(visibleFrontCorner.x, visibleFrontCorner.y);
-  ctx.lineTo(peak.x, peak.y);
-  ctx.stroke();
-
-  // ---- Small scalloped banner trim hanging from the front canopy edge,
-  // between the two front legs.
-  ctx.lineWidth = Math.max(1.8, stroke * 0.55);
-  const scallops = 3;
-  const eaveY = flT.y;
-  const eaveLeftX = flT.x + w * 0.08;
-  const eaveRightX = frT.x - w * 0.08;
-  const segW = (eaveRightX - eaveLeftX) / scallops;
-  const dropDepth = w * 0.10;
-  for (let i = 0; i < scallops; i++) {
-    const x0 = eaveLeftX + i * segW;
-    const x1 = x0 + segW;
-    ctx.beginPath();
-    ctx.moveTo(x0, eaveY);
-    ctx.quadraticCurveTo((x0 + x1) / 2, eaveY + dropDepth, x1, eaveY);
-    ctx.stroke();
-  }
-  ctx.lineWidth = stroke;
 }
 
-// Draw a cluster of small buildings inside every city-biome hex. Each city
-// gets a varied per-hex layout of 4-6 buildings (mix of houses, towers,
-// tents) packed inside the inner-circle radius, with river avoidance and
-// back-to-front sort so closer buildings occlude farther ones.
+// Draw a fortified castle compound matching Town-example.png. Three element
+// types layered back-to-front:
+//   1. Optional central spire — thin crenellated tower + tall pointed cone
+//      roof. Drawn first, behind the side keeps. Always present on the
+//      capital (carries the flag); ~55% of other castles also have one.
+//   2. Two-tier crenellated keeps (wider lower section + narrower upper
+//      section, both with dome merlons) flanking the spire. Drawn on top
+//      of the spire's base so the spire reads as rising from the cluster.
+//   3. Optional small front gatehouse with a wide arched door.
+function drawCastle(ctx, cx, baseY, size, rng, lineColor, fillColor, opts = {}) {
+  const flip = opts.flip ?? (rng.uniform() < 0.5 ? -1 : 1);
+  const towerCount = Math.min(4, opts.towerCount ?? (2 + Math.floor(rng.uniform() * 3))); // 2..4
+  const hasGate = opts.hasGate ?? (rng.uniform() < 0.80);
+  const hasFlag = !!opts.hasFlag;
+  const hasSpire = hasFlag || (opts.hasSpire ?? rng.uniform() < 0.55);
+
+  const stroke = cityStroke();
+
+  // Spire dimensions reused later for flag placement.
+  const spireW = size * 0.32;
+  const spireH = size * 1.65; // tower portion only; cone adds more on top
+  const spireConeH = spireH * 0.55;
+
+  if (hasSpire) {
+    drawCastleSpire(ctx, cx, baseY, spireW, spireH, stroke, lineColor, fillColor, rng);
+  }
+
+  // Side keep towers — two-tier stacked crenellated keeps. Symmetric around
+  // cx. When a spire is present and tower count is odd, skip the center
+  // slot so the spire stays visible behind the cluster.
+  const keepW = size * 0.50;
+  const keepHbase = size * 1.05;
+  const overlap = 0.22;
+  const pitch = keepW * (1 - overlap);
+  const totalSpan = pitch * (towerCount - 1);
+
+  const keeps = [];
+  for (let i = 0; i < towerCount; i++) {
+    if (hasSpire && towerCount % 2 === 1 && i === (towerCount - 1) / 2) continue;
+    const x = cx - totalSpan / 2 + pitch * i;
+    const w = keepW * (0.92 + rng.uniform() * 0.12);
+    const h = keepHbase * (0.90 + rng.uniform() * 0.18);
+    keeps.push({ x, w, h });
+  }
+
+  // Paint outside-in so inner keeps overlap outer keeps.
+  const idx = keeps.map((_, i) => i);
+  const mid = (keeps.length - 1) / 2;
+  idx.sort((a, b) => {
+    const da = Math.abs(a - mid), db = Math.abs(b - mid);
+    if (da !== db) return db - da;
+    return flip > 0 ? a - b : b - a;
+  });
+  for (const i of idx) {
+    const k = keeps[i];
+    drawTwoTierKeep(ctx, k.x, baseY, k.w, k.h, stroke, lineColor, fillColor, rng);
+  }
+
+  // Front gatehouse — small, slightly forward, overlapping the keeps' base.
+  if (hasGate) {
+    const gateW = size * 0.44;
+    const gateH = size * 0.55;
+    const gateY = baseY + size * 0.08;
+    drawGatehouse(ctx, cx, gateY, gateW, gateH, stroke, lineColor, fillColor, rng);
+  }
+
+  // Flag on the spire's cone apex (capital only).
+  if (hasFlag) {
+    const coneApexY = baseY - spireH * 0.48 - spireConeH;
+    drawFlag(ctx, cx, coneApexY, size * 0.45, flip, stroke, lineColor, fillColor, rng);
+  }
+}
+
 function drawCities(canvas, cityHexes, opts = {}) {
   if (!cityHexes || cityHexes.length === 0) return;
   const ctx = canvas.getContext('2d');
   const seed = opts.seed ?? 0;
   const lineColor = opts.lineColor ?? '#2a2015';
   const fillColor = opts.fillColor ?? '#e8d5b7';
-
-  // River avoidance mirrors drawHills: reject building placements whose
-  // bounding box contains any river centerline sample.
-  const riverPts = [];
-  if (opts.rivers) {
-    for (const r of opts.rivers) {
-      if (!r || !r.points) continue;
-      for (const p of r.points) riverPts.push(p);
-    }
-  }
-  const RIVER_CLEAR = HEX_SIZE * 0.14;
-  const crossesRiver = (cx, baseY, halfW, totalH) => {
-    if (riverPts.length === 0) return false;
-    const xMin = cx - halfW - RIVER_CLEAR;
-    const xMax = cx + halfW + RIVER_CLEAR;
-    const yMin = baseY - totalH - RIVER_CLEAR;
-    const yMax = baseY + RIVER_CLEAR;
-    for (let i = 0; i < riverPts.length; i++) {
-      const p = riverPts[i];
-      if (p.x >= xMin && p.x <= xMax && p.y >= yMin && p.y <= yMax) return true;
-    }
-    return false;
-  };
-
-  const buildings = [];
-  // Map-wide tower budget: at most one round tower and one classic tower
-  // across the entire map, so each tower style reads as a unique landmark.
-  let roundTowerUsed = false;
-  let classicTowerUsed = false;
+  const capital = opts.capital;
 
   for (const h of cityHexes) {
     const center = hexCenter(h.r, h.c, opts);
     const rng = createRng((((seed + h.r * 2654435761) ^ (h.c * 40503)) ^ 0xC17C9999) >>> 0);
-
-    const count = 2 + Math.floor(rng.uniform() * 2); // 2-3 buildings
-    // Cluster bounds: stay inside the inner-circle of the hex with a margin.
-    const innerR = HEX_SIZE * 0.88;
-    // Per-town iso facing: all buildings in this town flip the same way so the
-    // cluster reads with a consistent viewpoint instead of as scattered objects.
-    const townFlip = rng.uniform() < 0.5 ? -1 : 1;
-    // Shared baseline y: all buildings sit on roughly the same ground line,
-    // slightly forward of the hex center so the town sits in the foreground.
-    const townBaselineY = center.y + HEX_SIZE * 0.06;
-
-    // Track placed building footprints in this hex to discourage heavy
-    // overlap (small overlap is fine — adds depth).
-    const placedHere = [];
-    let towerPlaced = false; // at most one tower per tile
-
-    // Helper: pick between the two tower types, respecting the map-wide
-    // budget (each tower type at most once per map). Returns the available
-    // tower type, or null if both budgets are spent.
-    const pickTowerType = () => {
-      const roundOk = !roundTowerUsed;
-      const classicOk = !classicTowerUsed;
-      if (roundOk && classicOk) return rng.uniform() < 0.5 ? 'tower' : 'tower_classic';
-      if (roundOk) return 'tower';
-      if (classicOk) return 'tower_classic';
-      return null;
-    };
-
-    for (let i = 0; i < count; i++) {
-      let type;
-      // Anchor structure: every town of 3+ buildings is guaranteed one tower
-      // (if any tower budget remains) or large house as its first/most-
-      // prominent structure.
-      if (i === 0 && count >= 3) {
-        const anchorRoll = rng.uniform();
-        const wantTower = anchorRoll < 0.45;
-        const towerPick = wantTower ? pickTowerType() : null;
-        type = towerPick ?? 'house_large';
-      } else {
-        const typeRoll = rng.uniform();
-        if (typeRoll < 0.50) type = 'house';
-        else if (typeRoll < 0.75) type = rng.uniform() < 0.5 ? 'house_large' : 'tent';
-        else {
-          const towerPick = pickTowerType();
-          type = towerPick ?? 'house_large';
-        }
-      }
-      // Enforce one-tower-per-tile: if we already placed one in this hex,
-      // swap any subsequent tower roll for a large house.
-      if ((type === 'tower' || type === 'tower_classic') && towerPlaced) {
-        type = 'house_large';
-      }
-
-      // Size hierarchy: anchor (first building when count >= 3) is noticeably
-      // larger than satellites. Towers ALWAYS get anchor-tier size so they
-      // can't be dwarfed by an adjacent large house — combined with the
-      // bumped tower height multiplier, a tower is guaranteed to be the
-      // tallest structure in the town.
-      const isAnchor = (i === 0 && count >= 3);
-      const isTower = (type === 'tower' || type === 'tower_classic');
-      const sizeBase = (isAnchor || isTower)
-        ? HEX_SIZE * (0.52 + rng.uniform() * 0.10)
-        : HEX_SIZE * (0.32 + rng.uniform() * 0.10);
-      const dims = isTower
-        ? { halfW: sizeBase * 0.48, h: sizeBase * 2.55 }
-        : type === 'tent'
-          ? { halfW: sizeBase * 0.50, h: sizeBase * 1.10 }
-          : { halfW: sizeBase * 0.80, h: sizeBase * 1.05 };
-
-      // Farthest-point sampling: draw many candidates inside the hex and
-      // pick the one that maximizes the minimum gap to already-placed
-      // buildings (gap = center distance minus combined halfW + margin).
-      // Reject candidates that don't clear a hard minimum gap so neighbors
-      // never visibly overlap or touch.
-      //
-      // Type-based vertical bias:
-      //   - towers go toward the BACK of the hex (smaller baseY)
-      //   - tents go toward the FRONT/bottom of the hex (larger baseY)
-      //   - houses get no vertical bias
-      let yBias = 0;
-      if (type === 'tower' || type === 'tower_classic') yBias = -1;
-      else if (type === 'tent') yBias = 1;
-      let cx = center.x, baseY = center.y, placed = false;
-      let bestScore = -Infinity;
-      const CANDIDATES = 32;
-      const MIN_GAP = HEX_SIZE * 0.16; // hard minimum air between footprints
-      for (let attempt = 0; attempt < CANDIDATES; attempt++) {
-        // Angular sampling biased by type so candidates concentrate in the
-        // back half (towers) or front half (tents) of the hex.
-        let ang;
-        if (yBias < 0) {
-          // Back half: angles in [π, 2π] (upper half of canvas, smaller y).
-          ang = Math.PI + rng.uniform() * Math.PI;
-        } else if (yBias > 0) {
-          // Front half: angles in [0, π] (lower half of canvas, larger y).
-          ang = rng.uniform() * Math.PI;
-        } else {
-          ang = rng.uniform() * Math.PI * 2;
-        }
-        const radFrac = Math.sqrt(rng.uniform());
-        const rad = innerR * radFrac;
-        const ccx = center.x + Math.cos(ang) * rad;
-        // Snap candidate baseY to the shared town baseline. Towers can lift
-        // slightly UP (back of town), tents settle slightly DOWN (front).
-        // Houses sit on the line. Small jitter so they don't read as a row.
-        const baselineOffset = (yBias < 0 ? -HEX_SIZE * 0.10 : yBias > 0 ? HEX_SIZE * 0.08 : 0);
-        const jitter = (rng.uniform() - 0.5) * HEX_SIZE * 0.06;
-        const cby = townBaselineY + baselineOffset + jitter;
-        if (crossesRiver(ccx, cby, dims.halfW, dims.h)) continue;
-        // Score = min gap to other placed buildings. Reject if any gap is
-        // below the hard minimum.
-        let score = Infinity;
-        let rejected = false;
-        for (const p of placedHere) {
-          const dxx = ccx - p.cx;
-          const dyy = cby - p.baseY;
-          // Center-to-center distance minus combined halfWs gives the
-          // horizontal air between footprints; vertical stacking is allowed.
-          const gap = Math.hypot(dxx, dyy) - (dims.halfW + p.halfW);
-          if (gap < MIN_GAP) { rejected = true; break; }
-          if (gap < score) score = gap;
-        }
-        if (rejected) continue;
-        // Empty hex: prefer near-center so the first building anchors the cluster.
-        if (placedHere.length === 0) score = -Math.hypot(ccx - center.x, cby - center.y);
-        if (score > bestScore) {
-          bestScore = score;
-          cx = ccx; baseY = cby; placed = true;
-        }
-      }
-      if (!placed) continue;
-
-      placedHere.push({ cx, baseY, halfW: dims.halfW });
-      if (type === 'tower' || type === 'tower_classic') {
-        towerPlaced = true;
-        if (type === 'tower') roundTowerUsed = true;
-        else classicTowerUsed = true;
-      }
-      buildings.push({
-        type, cx, baseY, size: sizeBase, townFlip,
-        rngSeed: (rng.uniform() * 0xffffffff) >>> 0,
-        sortKey: baseY,
-      });
-    }
-
-  }
-
-  // Back-to-front so closer buildings (larger baseY) occlude farther ones.
-  buildings.sort((a, b) => a.sortKey - b.sortKey);
-  for (const b of buildings) {
-    const brng = createRng(b.rngSeed);
-    if (b.type === 'tower') {
-      drawTower(ctx, b.cx, b.baseY, b.size, brng, lineColor, fillColor);
-    } else if (b.type === 'tower_classic') {
-      drawTowerClassic(ctx, b.cx, b.baseY, b.size, brng, lineColor, fillColor);
-    } else if (b.type === 'tent') {
-      drawTent(ctx, b.cx, b.baseY, b.size, brng, lineColor, fillColor, b.townFlip);
-    } else if (b.type === 'house_large') {
-      drawHouse(ctx, b.cx, b.baseY, b.size, brng, lineColor, fillColor, 'large', b.townFlip);
-    } else {
-      drawHouse(ctx, b.cx, b.baseY, b.size, brng, lineColor, fillColor, 'small', b.townFlip);
-    }
+    const isCapital = !!capital && capital.r === h.r && capital.c === h.c;
+    const size = HEX_SIZE * 1.14;
+    const baseY = center.y + HEX_SIZE * 0.46;
+    drawCastle(ctx, center.x, baseY, size, rng, lineColor, fillColor, { hasFlag: isCapital });
   }
 }
 
@@ -3493,7 +3044,7 @@ function renderMap(opts = {}) {
     drawMountains(out, mountainHexes, { ...gridOpts, seed });
   }
   if (cityHexes.length > 0) {
-    drawCities(out, cityHexes, { ...gridOpts, seed, rivers });
+    drawCities(out, cityHexes, { ...gridOpts, seed, rivers, capital: biomesOut.cities[0] });
   }
 
   // Vignette drawn last so it darkens everything at the edges.
