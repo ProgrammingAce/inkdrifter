@@ -23,7 +23,7 @@ const {
   placeLakes, findRiverTerminusEndpoints, placeTerminusLakes,
   placePonds,
 } = require('./biomes.js');
-const { drawPonds, drawMountains, drawHills, drawGrass } = require('./terrain.js');
+const { drawPonds, drawMountains, drawHills, drawGrass, drawForests } = require('./terrain.js');
 const { drawCities } = require('./cities.js');
 const { drawHexGrid, paintParchment } = require('./grid.js');
 
@@ -425,12 +425,14 @@ function renderMap(opts = {}) {
   const mountainHexes = [];
   const hillHexes = [];
   const plainsHexes = [];
+  const forestHexes = [];
   const cityHexes = [];
   for (const [key, tag] of biomesOut.tags) {
     const [r, c] = key.split(',').map(Number);
     if (tag === 'mountains') mountainHexes.push({ r, c });
     else if (tag === 'hills') hillHexes.push({ r, c });
     else if (tag === 'plains') plainsHexes.push({ r, c });
+    else if (tag === 'forest') forestHexes.push({ r, c });
     else if (tag === 'city') cityHexes.push({ r, c });
   }
 
@@ -457,6 +459,9 @@ function renderMap(opts = {}) {
   }
   if (hillHexes.length > 0) {
     drawHills(out, hillHexes, { ...gridOpts, seed, rivers });
+  }
+  if (forestHexes.length > 0) {
+    drawForests(out, forestHexes, { ...gridOpts, seed, rivers });
   }
   if (mountainHexes.length > 0) {
     drawMountains(out, mountainHexes, { ...gridOpts, seed });

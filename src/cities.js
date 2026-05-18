@@ -3,7 +3,7 @@ const { createRng } = require('./rng.js');
 const { hexCenter } = require('./hex.js');
 
 function cityStroke() {
-  return Math.max(2.6, Math.min(5.2, HEX_SIZE * 0.095));
+  return Math.max(2.1, Math.min(4.3, HEX_SIZE * 0.078));
 }
 
 function inkSeg(ctx, x1, y1, x2, y2, rng, amount) {
