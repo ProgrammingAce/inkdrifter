@@ -14,7 +14,7 @@ const {
   generateRivers, computeRiverGeometry, riverBankPolygon, riverWaterPolygon, drawRiver,
 } = require('./rivers.js');
 const {
-  pickSides, selectWaterHexes,
+  pickSides, selectWaterHexes, selectIslands,
   buildCoastlineSegments, stitchSegments, buildCoastPolylines,
   drawOcean,
 } = require('./ocean.js');
@@ -69,9 +69,14 @@ function renderMap(opts = {}) {
   let rivers = [];
   if (drawOceanFlag) {
     const oceanRng = createRng((seed * 0x85ebca6b) >>> 0 ^ 0xc2b2ae35);
-    const sides = pickSides(oceanRng, sidesOverride);
-    sel = selectWaterHexes(oceanRng, sides, { ...oceanParams, ...gridOpts });
-    oceanInfo = { sides, waterCount: sel.water.size, waterFraction: sel.water.size / (rows * cols) };
+    if (opts.islands) {
+      sel = selectIslands(oceanRng, { ...oceanParams, ...gridOpts });
+      oceanInfo = { sides: [], waterCount: sel.water.size, waterFraction: sel.water.size / (rows * cols), islands: true };
+    } else {
+      const sides = pickSides(oceanRng, sidesOverride);
+      sel = selectWaterHexes(oceanRng, sides, { ...oceanParams, ...gridOpts });
+      oceanInfo = { sides, waterCount: sel.water.size, waterFraction: sel.water.size / (rows * cols) };
+    }
   }
   const oceanWater = sel ? new Set(sel.water) : new Set();
 
@@ -460,7 +465,7 @@ function renderMap(opts = {}) {
     drawGrass(out, plainsHexes, { ...gridOpts, seed, rivers });
   }
   if (hillHexes.length > 0) {
-    drawHills(out, hillHexes, { ...gridOpts, seed, rivers });
+    drawHills(out, hillHexes, { ...gridOpts, seed, rivers, water: sel ? sel.water : null });
   }
   if (forestHexes.length > 0) {
     drawForests(out, forestHexes, { ...gridOpts, seed, rivers, ponds, lakesInfo });

@@ -11,11 +11,12 @@ const {
 const { MAX_PLAYERS_PER_LOBBY } = require('./protocol.js');
 
 class Lobby {
-  constructor({ code, seed, rows, cols, hostToken, hostName }) {
+  constructor({ code, seed, rows, cols, hostToken, hostName, islands = false }) {
     this.code = code;
     this.seed = seed;
     this.rows = rows;
     this.cols = cols;
+    this.islands = !!islands;
     const { W, H } = gridCanvasSize(rows, cols, DEFAULT_GRID_ORIGIN_X, DEFAULT_GRID_ORIGIN_Y);
     this.canvasWidth = W;
     this.canvasHeight = H;

@@ -31,7 +31,7 @@ The host can also **save** the current game state (player positions, fog, marker
 
 ## Map generator
 
-The whole map pipeline lives in `index.js` and can also be run as a CLI to dump PNGs:
+The map generator is split across `src/` (biomes, cities, ocean, rivers, grid, hex, terrain, rng, renderMap) and re-exported through `index.js` for back-compat with the server. The CLI entry point is `src/cli.js`, invoked when you run `index.js` directly:
 
 ```bash
 # default demo variants
@@ -66,7 +66,19 @@ Specs for the major systems live in `BIOMES.md`, `OCEAN.md`, `RIVER_SPEC.md`, `H
 ## Project layout
 
 ```
-index.js                 # full map generator + renderMap() entry point
+index.js                 # re-export shim; runs src/cli.js when invoked directly
+src/
+  cli.js                 # CLI flag parsing + PNG dump
+  renderMap.js           # top-level renderMap() compositing entry point
+  constants.js           # HEX_SIZE, grid bounds, canvas sizing helpers
+  rng.js                 # seeded RNG
+  hex.js                 # hex geometry (centers, vertices, neighbors, vertex graph)
+  grid.js                # grid construction + per-hex metadata
+  ocean.js               # ocean side selection + coastline stitching
+  rivers.js              # river path generation + trimming
+  biomes.js              # elevation/moisture fields + biome classification
+  cities.js              # city placement + settlement rendering
+  terrain/               # per-biome draw passes (mountains, hills, forest, etc.)
 server/
   main.js                # Express + Socket.IO, HTTP routes and socket handlers
   lobby.js               # Lobby class (game state, fog logic, rate limiting)
@@ -79,6 +91,8 @@ web/
   lobby.html             # lobby page (map view + controls)
   js/
     hex.js               # hex geometry mirroring index.js
+    home.js              # home page controller (create/join flow)
+    socket.js            # socket.io client wrapper
     lobby.js             # lobby page controller, socket event handling
     render.js            # canvas fog overlay, marker, pending-request indicators
     input.js             # host drag, player ring-click, cursor affordance

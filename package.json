@@ -1,7 +1,7 @@
 {
-  "name": "hex-map",
+  "name": "inkdrifter",
   "version": "1.0.0",
-  "description": "",
+  "description": "Multiplayer hex map explorer with a procedurally generated parchment-style fantasy map.",
   "license": "AGPL-3.0",
   "main": "index.js",
   "scripts": {

@@ -79,7 +79,7 @@ function emitError(socket, code, message) {
 function enqueueRender(code, { onReady, errorLabel = 'Render' } = {}) {
   const lobby = manager.getLobby(code);
   if (!lobby) return;
-  renderQueue.render(lobby.seed, lobby.rows, lobby.cols).then(({ pngBuffer, biomeTags }) => {
+  renderQueue.render(lobby.seed, lobby.rows, lobby.cols, { islands: lobby.islands }).then(({ pngBuffer, biomeTags }) => {
     const l = manager.getLobby(code);
     if (!l) return;
     l.setReady(pngBuffer, biomeTags);
@@ -143,10 +143,11 @@ async function createLobbyAndRender(req, res, { onReady, errorLabel, requireSeed
   if (grid.error) return res.status(400).json({ error: grid.error });
   const s = parseSeed(req.body.seed, { required: requireSeed });
   if (s.error) return res.status(400).json({ error: s.error });
+  const islands = !!req.body.islands;
 
   let lobby;
   try {
-    lobby = await manager.createLobby({ rows: grid.rows, cols: grid.cols, seed: s.seed, hostName: name });
+    lobby = await manager.createLobby({ rows: grid.rows, cols: grid.cols, seed: s.seed, hostName: name, islands });
   } catch (e) {
     if (e.code === 503) return res.status(503).json({ error: 'code_exhausted' });
     throw e;

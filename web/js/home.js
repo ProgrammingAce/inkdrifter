@@ -14,6 +14,13 @@ joinBtn.addEventListener('click', (e) => {
   if (joinBtn.disabled) e.preventDefault();
 });
 
+// Hidden URL toggle: ?islands=1 makes new lobbies generate islands-only maps.
+// No UI; query param sticks for as long as the home page is open.
+const ISLANDS_MODE = (() => {
+  const v = new URLSearchParams(window.location.search).get('islands');
+  return v != null && v !== '' && v !== '0' && v.toLowerCase() !== 'false';
+})();
+
 importBtn.addEventListener('click', () => {
   importFileInput.value = '';
   importFileInput.click();
@@ -86,6 +93,7 @@ createForm.addEventListener('submit', async (e) => {
   try {
     const body = { hostName, rows, cols };
     if (seedRaw) body.seed = parseInt(seedRaw, 10);
+    if (ISLANDS_MODE) body.islands = true;
     const res = await fetch('/api/lobbies', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

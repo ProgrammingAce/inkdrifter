@@ -11,7 +11,7 @@ class LobbyManager {
     this._idleInterval = setInterval(() => this._checkIdle(), 60 * 1000);
   }
 
-  async createLobby({ rows, cols, seed, hostName }) {
+  async createLobby({ rows, cols, seed, hostName, islands = false }) {
     let code;
     for (let attempt = 0; attempt < 20; attempt++) {
       const candidate = crypto.randomInt(0, 100000).toString().padStart(5, '0');
@@ -20,7 +20,7 @@ class LobbyManager {
     if (!code) { const e = new Error('CODE_EXHAUSTED'); e.code = 503; throw e; }
 
     const hostToken = crypto.randomUUID();
-    const lobby = new Lobby({ code, seed, rows, cols, hostToken, hostName });
+    const lobby = new Lobby({ code, seed, rows, cols, hostToken, hostName, islands });
     this.lobbies.set(code, lobby);
     return lobby;
   }

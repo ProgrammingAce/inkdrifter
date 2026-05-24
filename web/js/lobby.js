@@ -1,6 +1,6 @@
 import { EVENTS, ERROR_CODES, createSocket } from './socket.js';
 import { loadBaseMap, startRenderLoop, BIOME_COLORS } from './render.js';
-import { initInput, scrollToMarker } from './input.js';
+import { initInput, scrollToMarker, initZoom } from './input.js';
 import { hexCenter } from './hex.js';
 
 const code = window.location.pathname.split('/').pop();
@@ -250,6 +250,8 @@ async function initMap() {
     socket,
     onDragPos: (pos) => { dragPos = pos; },
   });
+
+  initZoom();
 
   updateMarkerBanner();
 }

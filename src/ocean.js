@@ -99,6 +99,88 @@ function selectWaterHexes(rng, sides, opts = {}) {
   return { water, profiles, sides };
 }
 
+// Islands-only generation: water everywhere except a few small interior
+// land clusters. Returns the same shape as selectWaterHexes so downstream
+// code (coastline, biomes, lakes, rivers) doesn't need to branch.
+function selectIslands(rng, opts = {}) {
+  const rows = opts.rows ?? DEFAULT_ROWS;
+  const cols = opts.cols ?? DEFAULT_COLS;
+  const total = rows * cols;
+  // Keep at least 2 hexes of water between any land and the map edge so islands
+  // visually sit in open ocean rather than crowding the canvas border.
+  const margin = 2;
+
+  // Several substantial islands sitting in open sea: ~1 island per 30 hexes
+  // (no upper cap — bigger maps get proportionally more islands), total land
+  // ~18-30% of the map, ~6-14 hexes per island.
+  const islandCount = Math.max(2, Math.floor(total / 30));
+  const targetLand = Math.floor(total * (0.18 + rng.uniform() * 0.12));
+  const sizePer = Math.max(6, Math.min(14, Math.floor(targetLand / islandCount)));
+
+  const land = new Set();
+  const interiorRows = rows - margin * 2;
+  const interiorCols = cols - margin * 2;
+  if (interiorRows <= 0 || interiorCols <= 0) {
+    return { water: new Set(), profiles: {}, sides: [] };
+  }
+
+  // `buffer` = land hexes + 1-hex ring around them. New hexes (seed or growth)
+  // can't enter another island's buffer, which keeps islands edge-separated AND
+  // vertex-separated. Without this, two islands could share a vertex, and the
+  // coastline stitcher would walk from one island's perimeter into the other's,
+  // breaking the closed outline.
+  const buffer = new Set();
+  const addToBuffer = (r, c) => {
+    buffer.add(`${r},${c}`);
+    for (let i = 0; i < 6; i++) {
+      const n = neighborOf(r, c, i);
+      buffer.add(`${n.r},${n.c}`);
+    }
+  };
+
+  let placed = 0;
+  for (let attempt = 0; placed < islandCount && attempt < islandCount * 20; attempt++) {
+    const r = margin + Math.floor(rng.uniform() * interiorRows);
+    const c = margin + Math.floor(rng.uniform() * interiorCols);
+    const seedKey = `${r},${c}`;
+    if (buffer.has(seedKey)) continue;
+
+    const targetSize = Math.max(2, Math.round(sizePer * (0.6 + rng.uniform() * 0.8)));
+    const island = new Set([seedKey]);
+    const frontier = [{ r, c }];
+    while (island.size < targetSize && frontier.length > 0) {
+      const fi = Math.floor(rng.uniform() * frontier.length);
+      const cur = frontier.splice(fi, 1)[0];
+      for (let i = 0; i < 6; i++) {
+        const n = neighborOf(cur.r, cur.c, i);
+        if (n.r < margin || n.r >= rows - margin || n.c < margin || n.c >= cols - margin) continue;
+        const nk = `${n.r},${n.c}`;
+        if (island.has(nk) || buffer.has(nk)) continue;
+        if (rng.uniform() < 0.7) {
+          island.add(nk);
+          frontier.push({ r: n.r, c: n.c });
+          if (island.size >= targetSize) break;
+        }
+      }
+    }
+    for (const k of island) {
+      land.add(k);
+      const [ir, ic] = k.split(',').map(Number);
+      addToBuffer(ir, ic);
+    }
+    placed++;
+  }
+
+  const water = new Set();
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const k = `${r},${c}`;
+      if (!land.has(k)) water.add(k);
+    }
+  }
+  return { water, profiles: {}, sides: [] };
+}
+
 function pointIsOcean(x, y, water, opts = {}) {
   const h = hexAtPoint(x, y, opts);
   if (h === null) return true;
@@ -464,7 +546,7 @@ function drawCoastWaveRings(ctx, polylines, water, opts, env) {
 }
 
 module.exports = {
-  pickSides, selectWaterHexes, pointIsOcean,
+  pickSides, selectWaterHexes, selectIslands, pointIsOcean,
   buildCoastlineSegments, stitchSegments, buildCoastPolylines,
   drawOcean,
 };
