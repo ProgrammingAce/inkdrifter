@@ -3,9 +3,10 @@ const { renderMap } = require('../index.js');
 
 parentPort.on('message', ({ jobId, seed, rows, cols }) => {
   try {
-    const { canvas } = renderMap({ seed, rows, cols });
+    const { canvas, biomes } = renderMap({ seed, rows, cols });
     const pngBuffer = canvas.toBuffer('image/png');
-    parentPort.postMessage({ jobId, ok: true, pngBuffer });
+    const biomeTags = biomes ? Object.fromEntries(biomes.tags) : {};
+    parentPort.postMessage({ jobId, ok: true, pngBuffer, biomeTags });
   } catch (err) {
     parentPort.postMessage({ jobId, ok: false, error: err.message });
   }

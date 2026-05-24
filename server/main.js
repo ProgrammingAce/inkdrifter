@@ -28,7 +28,7 @@ const ORIGIN = process.env.ORIGIN || false;
 const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
-  maxHttpBufferSize: 1024,
+  maxHttpBufferSize: '64kb',
   cors: { origin: ORIGIN },
 });
 
@@ -79,10 +79,10 @@ function emitError(socket, code, message) {
 function enqueueRender(code, { onReady, errorLabel = 'Render' } = {}) {
   const lobby = manager.getLobby(code);
   if (!lobby) return;
-  renderQueue.render(lobby.seed, lobby.rows, lobby.cols).then(pngBuffer => {
+  renderQueue.render(lobby.seed, lobby.rows, lobby.cols).then(({ pngBuffer, biomeTags }) => {
     const l = manager.getLobby(code);
     if (!l) return;
-    l.setReady(pngBuffer);
+    l.setReady(pngBuffer, biomeTags);
     if (onReady) onReady(l);
     io.to(code).emit(EVENTS.MAP_READY, {});
     broadcastLobbyState(code);

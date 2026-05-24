@@ -1,5 +1,5 @@
 import { EVENTS, ERROR_CODES, createSocket } from './socket.js';
-import { loadBaseMap, startRenderLoop } from './render.js';
+import { loadBaseMap, startRenderLoop, BIOME_COLORS } from './render.js';
 import { initInput, scrollToMarker } from './input.js';
 import { hexCenter } from './hex.js';
 
@@ -13,6 +13,7 @@ let state = null;
 let mapLoaded = false;
 let dragPos = null;
 let previousMarker = null;
+let biomeOverlayOn = false;
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 const loadingEl = document.getElementById('loading');
@@ -31,8 +32,12 @@ const markerBannerEl = document.getElementById('marker-banner');
 // Host-only
 const fogHostEl = document.getElementById('fog-host');
 const fogPlayersEl = document.getElementById('fog-players');
-const hostControlsEl = document.getElementById('host-controls');
+const fogControlsEl = document.getElementById('fog-controls');
 const newGameBtn = document.getElementById('new-game-btn');
+
+// Biome overlay
+const biomeToggleEl = document.getElementById('biome-toggle');
+const biomeLegendEl = document.getElementById('biome-legend');
 
 // Toast
 const toastEl = document.getElementById('toast');
@@ -60,6 +65,7 @@ function applyState(data) {
   updatePendingList();
   updateFogControls();
   updateMarkerBanner();
+  updateLegendVisibility();
   return prevMarker;
 }
 
@@ -143,9 +149,35 @@ function updateMarkerBanner() {
   }
 }
 
+function populateLegendSwatches() {
+  if (!biomeLegendEl) return;
+  const tags = new Set(Object.values(state?.biomeTags || {}));
+  const rows = biomeLegendEl.querySelectorAll('.legend-row[data-biome]');
+  for (const row of rows) {
+    const tag = row.dataset.biome;
+    const info = BIOME_COLORS[tag];
+    if (!info) continue;
+    row.style.display = tags.has(tag) ? '' : 'none';
+    let swatch = row.querySelector('.legend-swatch');
+    if (!swatch) {
+      swatch = document.createElement('span');
+      swatch.className = 'legend-swatch';
+      row.insertBefore(swatch, row.firstChild);
+    }
+    swatch.style.background = info.swatch;
+  }
+}
+
+function updateLegendVisibility() {
+  if (!biomeLegendEl || !state) return;
+  const hasBiomes = state.biomeTags && Object.keys(state.biomeTags).length > 0;
+  biomeLegendEl.style.display = (hasBiomes && biomeOverlayOn) ? 'block' : 'none';
+  if (hasBiomes && biomeOverlayOn) populateLegendSwatches();
+}
+
 function showPreviewUI() {
   if (!isHost) return;
-  if (hostControlsEl) hostControlsEl.style.display = 'none';
+  if (fogControlsEl) fogControlsEl.style.display = 'none';
   const bottom = document.getElementById('host-controls-bottom');
   if (bottom) bottom.style.display = 'none';
   const preview = document.getElementById('host-controls-preview');
@@ -156,7 +188,7 @@ function showInGameUI() {
   if (isHost) {
     const preview = document.getElementById('host-controls-preview');
     if (preview) preview.style.display = 'none';
-    if (hostControlsEl) hostControlsEl.style.display = '';
+    if (fogControlsEl) fogControlsEl.style.display = '';
     const bottom = document.getElementById('host-controls-bottom');
     if (bottom) bottom.style.display = '';
   }
@@ -207,7 +239,8 @@ async function initMap() {
     overlayCtx,
     () => state,
     () => isHost,
-    () => dragPos
+    () => dragPos,
+    () => biomeOverlayOn
   );
 
   initInput({
@@ -288,6 +321,7 @@ fetch(`/api/lobbies/${code}`)
         marker: null,
         fog: { host: true, players: true },
         pendingRequests: [],
+        biomeTags: lobbyStatus.biomeTags || {},
       };
       state = initialData;
       _mapLoadPending = true;
@@ -301,7 +335,7 @@ fetch(`/api/lobbies/${code}`)
         _mapLoadPending = false;
       });
     } else if (lobbyStatus.status === 'rendering' && !state) {
-      state = { ...lobbyStatus, _revealedSet: new Set(), revealed: [], players: {}, marker: null, fog: { host: true, players: true }, pendingRequests: [] };
+      state = { ...lobbyStatus, _revealedSet: new Set(), revealed: [], players: {}, marker: null, fog: { host: true, players: true }, pendingRequests: [], biomeTags: lobbyStatus.biomeTags || {} };
     }
   });
 
@@ -386,7 +420,7 @@ socket.on(EVENTS.ERROR, ({ code: errCode, message }) => {
     bad_auth: 'Authentication failed.',
     not_host: 'Only the host can do that.',
     out_of_bounds: 'Target tile is out of bounds.',
-    not_in_ring: 'You can only request the tiles adjacent to the marker.',
+    not_in_ring: 'You can only request visible tiles or tiles adjacent to them.',
     marker_not_placed: 'The marker has not been placed yet.',
     rate_limited: 'Too many requests. Please slow down.',
     lobby_not_ready: 'The lobby is still loading.',
@@ -395,8 +429,8 @@ socket.on(EVENTS.ERROR, ({ code: errCode, message }) => {
 });
 
 // ── Host controls ─────────────────────────────────────────────────────────────
-if (isHost && hostControlsEl) {
-  hostControlsEl.style.display = '';
+if (isHost && fogControlsEl) {
+  fogControlsEl.style.display = '';
   document.getElementById('copy-code-btn')?.addEventListener('click', () => {
     navigator.clipboard.writeText(code).then(() => showToast('Code copied!'));
   });
@@ -452,6 +486,16 @@ if (isHost && hostControlsEl) {
       .catch(() => showToast('Failed to export game state.', true));
   });
 }
+
+// ── Biome overlay toggle ──────────────────────────────────────────────────────
+if (biomeToggleEl) {
+  biomeToggleEl.checked = biomeOverlayOn;
+  biomeToggleEl.addEventListener('change', () => {
+    biomeOverlayOn = biomeToggleEl.checked;
+    updateLegendVisibility();
+  });
+}
+populateLegendSwatches();
 
 // ── Connect ───────────────────────────────────────────────────────────────────
 if (!hostToken && !playerToken) {

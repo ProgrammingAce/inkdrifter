@@ -806,70 +806,72 @@ function drawForests(canvas, forestHexes, opts = {}) {
 // Per-hex swamp tile: slim firs, broken stumps, notched lily pads, eyebrow
 // puddles. Matches Swamp.png reference art. Scaled to hex size.
 
-// Tall slim fir: single wavy silhouette, stroked trunk
+// Tall slim fir: single wavy-silhouette canopy + two stroked trunk lines
 function drawSwampFir(ctx, cx, baseY, h, rng, lineColor, fillColor) {
-  const sw = treeStroke() * (0.85 + rng.uniform() * 0.3);
+  const sw = Math.max(2, h * 0.07);
   ctx.strokeStyle = lineColor;
   ctx.fillStyle = fillColor;
   ctx.lineWidth = sw;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-
-  const trunkH = h * (0.22 + rng.uniform() * 0.06);
-  const canopyH = h - trunkH;
+  const canopyH = h * (0.52 + rng.uniform() * 0.08);
+  const trunkH = h - canopyH;
   const skirtY = baseY - trunkH;
-  const apexY = baseY - h;
-  const halfW = h * (0.045 + rng.uniform() * 0.02);
+  const halfW = h * (0.18 + rng.uniform() * 0.08);
   const nLobes = 3 + Math.floor(rng.uniform() * 2);
-
-  // Build left/right sides independently for asymmetry
-  const makeSide = (sgn) => {
-    const pts = [];
-    pts.push({ x: cx + sgn * halfW * (0.9 + rng.uniform() * 0.2), y: skirtY });
-    for (let i = 0; i < nLobes; i++) {
-      const vf = (trunkH / h) + i * (1 - trunkH / h - 0.15) / nLobes;
-      const tf = vf + (1 - trunkH / h - 0.15) / nLobes * 0.5;
-      const vw = halfW * (1 - i * 0.18) * (0.75 + rng.uniform() * 0.1);
-      const tw = halfW * (1 - (i + 1) * 0.15) * (0.9 + rng.uniform() * 0.1);
-      pts.push({ x: cx + sgn * vw, y: baseY - h * vf });
-      pts.push({ x: cx + sgn * tw, y: baseY - h * tf });
-    }
-    pts.push({ x: cx, y: apexY });
-    return pts;
-  };
-
-  const L = makeSide(-1);
-  const R = makeSide(+1).reverse();
-
-  // Single continuous silhouette
+  // Canopy: closed wavy silhouette — right side up, left side down
+  const rightPts = [];
+  const leftPts = [];
+  for (let i = 0; i < nLobes; i++) {
+    const t = (i + 0.5) / nLobes;
+    const wBase = halfW * (1 - t * 0.72);
+    const wOut = wBase * (1.35 + rng.uniform() * 0.40);
+    const wIn = wBase * (0.25 + rng.uniform() * 0.20);
+    const yOut = skirtY - canopyH * (t - 0.08);
+    const yIn = skirtY - canopyH * (t + 0.08);
+    rightPts.push({ ox: cx + wOut, oy: yOut, ix: cx + wIn, iy: yIn });
+    const wOutL = halfW * (1 - t * 0.72) * (1.35 + rng.uniform() * 0.40);
+    const wInL = halfW * (1 - t * 0.72) * (0.25 + rng.uniform() * 0.20);
+    leftPts.push({ ox: cx - wOutL, oy: yOut, ix: cx - wInL, iy: yIn });
+  }
   ctx.beginPath();
-  ctx.moveTo(L[0].x, L[0].y);
-  for (let i = 1; i < L.length; i++) {
-    const prev = L[i - 1], p = L[i];
-    ctx.quadraticCurveTo((prev.x + p.x) / 2, (prev.y + p.y) / 2, p.x, p.y);
+  ctx.moveTo(cx + halfW * 0.55, skirtY);
+  for (let i = 0; i < rightPts.length; i++) {
+    const p = rightPts[i];
+    const prevX = i === 0 ? cx + halfW * 0.55 : rightPts[i - 1].ix;
+    const prevY = i === 0 ? skirtY : rightPts[i - 1].iy;
+    ctx.quadraticCurveTo(p.ox, p.oy, p.ix, p.iy);
   }
-  for (let i = 0; i < R.length; i++) {
-    const prev = i === 0 ? L[L.length - 1] : R[i - 1];
-    const p = R[i];
-    ctx.quadraticCurveTo((prev.x + p.x) / 2, (prev.y + p.y) / 2, p.x, p.y);
+  ctx.lineTo(cx, skirtY - canopyH);
+  for (let i = leftPts.length - 1; i >= 0; i--) {
+    const p = leftPts[i];
+    ctx.quadraticCurveTo(p.ox, p.oy, p.ix, p.iy);
   }
+  const endL = { x: cx - halfW * 0.55, y: skirtY };
+  ctx.quadraticCurveTo(cx - halfW * 0.85, skirtY + h * 0.008, endL.x, endL.y);
+  ctx.quadraticCurveTo(cx, skirtY - h * 0.015, cx + halfW * 0.55, skirtY);
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
-
-  // Trunk: two wavy stroked lines
-  const trunkW = h * 0.025;
-  const wobble = () => (rng.uniform() - 0.5) * trunkW * 0.5;
-  ctx.lineWidth = sw * 0.7;
-  // Left trunk edge
+  // Trunk: two parallel wavy lines
+  ctx.lineWidth = sw * 0.55;
+  const tw = halfW * 0.18;
+  const wobble = trunkH * 0.03;
   ctx.beginPath();
-  ctx.moveTo(cx - trunkW + wobble(), skirtY);
-  ctx.quadraticCurveTo(cx - trunkW - trunkW * 0.3 + wobble(), baseY - trunkH * 0.5, cx - trunkW * 0.8 + wobble(), baseY);
+  ctx.moveTo(cx - tw, skirtY);
+  ctx.bezierCurveTo(
+    cx - tw + (rng.uniform() - 0.5) * wobble, skirtY + trunkH * 0.33,
+    cx - tw + (rng.uniform() - 0.5) * wobble, skirtY + trunkH * 0.66,
+    cx - tw, baseY
+  );
   ctx.stroke();
-  // Right trunk edge
   ctx.beginPath();
-  ctx.moveTo(cx + trunkW + wobble(), skirtY);
-  ctx.quadraticCurveTo(cx + trunkW + trunkW * 0.3 + wobble(), baseY - trunkH * 0.5, cx + trunkW * 0.8 + wobble(), baseY);
+  ctx.moveTo(cx + tw, skirtY);
+  ctx.bezierCurveTo(
+    cx + tw + (rng.uniform() - 0.5) * wobble, skirtY + trunkH * 0.33,
+    cx + tw + (rng.uniform() - 0.5) * wobble, skirtY + trunkH * 0.66,
+    cx + tw, baseY
+  );
   ctx.stroke();
 }
 
@@ -888,7 +890,6 @@ function drawSwampRound(ctx, cx, baseY, h, rng, lineColor, fillColor) {
   ctx.lineWidth = sw;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-
   const N = 16;
   const lobeN = 3 + Math.floor(rng.uniform() * 3);
   const lobePhase = rng.uniform() * Math.PI * 2;
@@ -904,7 +905,6 @@ function drawSwampRound(ctx, cx, baseY, h, rng, lineColor, fillColor) {
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
-
   const tH = Math.max(0.5, hw * 0.15);
   ctx.beginPath();
   ctx.moveTo(cx - tH, canopyBaseY);
@@ -914,125 +914,137 @@ function drawSwampRound(ctx, cx, baseY, h, rng, lineColor, fillColor) {
   ctx.stroke();
 }
 
-// Broken stump: jagged top, tapered body, branch stubs
+// Broken stump: tapered body, jagged top, branch stubs
+// h is the intended stump height (already scaled at call site)
 function drawSwampStump(ctx, cx, baseY, h, rng, lineColor, fillColor) {
-  const stumpH = h * (0.30 + rng.uniform() * 0.15);
-  const baseHW = h * (0.08 + rng.uniform() * 0.04);
-  const topHW = baseHW * (0.6 + rng.uniform() * 0.25);
+  const stumpH = h;
+  const baseHW = h * (0.40 + rng.uniform() * 0.10);
+  const topHW = baseHW * (0.45 + rng.uniform() * 0.15);
   const sw = treeStroke() * (0.8 + rng.uniform() * 0.4);
   ctx.strokeStyle = lineColor;
   ctx.fillStyle = fillColor;
   ctx.lineWidth = sw;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-
   const nPeaks = 3 + Math.floor(rng.uniform() * 2);
-  const peakPts = [];
+  const peakYs = [];
   for (let i = 0; i < nPeaks; i++) {
-    const t = nPeaks === 1 ? 0.5 : i / (nPeaks - 1);
-    const x = cx - topHW + t * topHW * 2;
-    const y = baseY - stumpH - rng.uniform() * stumpH * 0.15;
-    peakPts.push({ x, y });
+    peakYs.push(baseY - stumpH * (0.70 + rng.uniform() * 0.30));
   }
-
   ctx.beginPath();
   ctx.moveTo(cx - baseHW, baseY);
-  ctx.quadraticCurveTo(cx - baseHW - baseHW * 0.1, baseY - stumpH * 0.5, peakPts[0].x, peakPts[0].y);
-  for (let i = 1; i < peakPts.length; i++) {
-    const p = peakPts[i], prev = peakPts[i - 1];
-    const mx = (prev.x + p.x) / 2;
-    const my = (prev.y + p.y) / 2 - stumpH * 0.04;
-    ctx.quadraticCurveTo(mx, my, p.x, p.y);
+  ctx.quadraticCurveTo(cx - baseHW * 0.88, baseY - stumpH * 0.48, cx - topHW, peakYs[0]);
+  for (let i = 1; i < nPeaks; i++) {
+    const px = cx - topHW + (i / (nPeaks - 1)) * topHW * 2;
+    const prevX = cx - topHW + ((i - 1) / (nPeaks - 1)) * topHW * 2;
+    const midX = (prevX + px) / 2;
+    const midY = (peakYs[i - 1] + peakYs[i]) / 2 + stumpH * 0.10;
+    ctx.quadraticCurveTo(midX, midY, px, peakYs[i]);
   }
-  ctx.quadraticCurveTo(
-    (peakPts[peakPts.length - 1].x + cx + topHW) / 2,
-    (peakPts[peakPts.length - 1].y + baseY) / 2 + stumpH * 0.05,
-    cx + baseHW, baseY
-  );
+  ctx.quadraticCurveTo(cx + topHW * 0.88, baseY - stumpH * 0.48, cx + baseHW, baseY);
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
-
-  // Branch stubs on sides
+  // Branch stubs — originate from the body edge at that height
+  ctx.lineWidth = sw * 0.65;
   const nStubs = 1 + Math.floor(rng.uniform() * 2);
-  ctx.lineWidth = sw * 0.7;
   for (let i = 0; i < nStubs; i++) {
     const side = rng.uniform() < 0.5 ? -1 : 1;
-    const st = 0.3 + rng.uniform() * 0.5;
+    const st = 0.25 + rng.uniform() * 0.55;
     const sy = baseY - stumpH * st;
-    const sl = h * (0.04 + rng.uniform() * 0.06);
-    const sa = side * (0.3 + rng.uniform() * 0.5);
+    const bodyHW = baseHW * (1 - st) + topHW * st;
+    const sl = stumpH * (0.30 + rng.uniform() * 0.30);
+    const sa = side * (0.5 + rng.uniform() * 0.6);
     ctx.beginPath();
-    ctx.moveTo(cx + side * topHW * 0.4, sy);
-    const ex = cx + side * topHW * 0.4 + Math.sin(sa) * sl;
-    const ey = sy - Math.cos(sa) * sl * 0.5;
-    ctx.quadraticCurveTo((cx + ex) / 2, (sy + ey) / 2, ex, ey);
+    ctx.moveTo(cx + side * bodyHW, sy);
+    ctx.lineTo(cx + side * bodyHW + Math.sin(sa) * sl, sy - Math.cos(sa) * sl * 0.45);
     ctx.stroke();
   }
 }
 
-// Notched lily pad: oval with wedge slit, smooth outline
+// Notched lily pad: oval outline with wedge notch and small curved vein
 function drawSwampLilyPad(ctx, cx, cy, rx, ry, rng, lineColor, fillColor) {
   const sw = Math.max(1.5, rx * 0.3);
   ctx.strokeStyle = lineColor;
-  ctx.fillStyle = fillColor;
   ctx.lineWidth = sw;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-
   const notchAngle = rng.uniform() * Math.PI * 2;
   const notchHalfSpan = 0.35 + rng.uniform() * 0.25;
-  const notchDepth = 0.3 + rng.uniform() * 0.2;
+  const notchDepth = 0.4 + rng.uniform() * 0.3;
   const N = 24;
-
-  // Collect outline points, skip the notch arc
-  const pts = [];
-  for (let i = 0; i < N; i++) {
-    const t = (i / N) * Math.PI * 2;
-    let rel = ((t - notchAngle + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-    if (Math.abs(rel) <= notchHalfSpan) continue;
-    const wobble = 1 + (rng.uniform() - 0.5) * 0.1;
-    pts.push({
-      x: cx + Math.cos(t) * rx * wobble,
-      y: cy + Math.sin(t) * ry * wobble,
-    });
-  }
-  if (pts.length < 3) return;
-
-  // Notch tip point
   const tipX = cx + Math.cos(notchAngle) * rx * notchDepth;
   const tipY = cy + Math.sin(notchAngle) * ry * notchDepth;
   const edgeSX = cx + Math.cos(notchAngle - notchHalfSpan) * rx;
   const edgeSY = cy + Math.sin(notchAngle - notchHalfSpan) * ry;
   const edgeEX = cx + Math.cos(notchAngle + notchHalfSpan) * rx;
   const edgeEY = cy + Math.sin(notchAngle + notchHalfSpan) * ry;
-
+  const pts = [];
+  for (let i = 0; i < N; i++) {
+    const t = (i / N) * Math.PI * 2;
+    let d = t - notchAngle;
+    d = ((d + Math.PI) % (Math.PI * 2)) - Math.PI;
+    if (d < -Math.PI) d += Math.PI * 2;
+    if (Math.abs(d) < notchHalfSpan) continue;
+    pts.push({ x: cx + Math.cos(t) * rx, y: cy + Math.sin(t) * ry, a: t });
+  }
+  // Handle degenerate notch (0 points)
+  if (!pts.length) {
+    ctx.beginPath();
+    ctx.moveTo(edgeSX, edgeSY);
+    ctx.lineTo(tipX, tipY);
+    ctx.lineTo(edgeEX, edgeEY);
+    ctx.stroke();
+    // Vein mark inside
+    ctx.lineWidth = sw * 0.4;
+    ctx.beginPath();
+    ctx.moveTo(cx - rx * 0.3, cy - ry * 0.15);
+    ctx.quadraticCurveTo(cx, cy + ry * 0.2, cx + rx * 0.3, cy - ry * 0.1);
+    ctx.stroke();
+    return;
+  }
+  // Handle single surviving point
+  if (pts.length === 1) {
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    ctx.quadraticCurveTo((pts[0].x + edgeEX) / 2, (pts[0].y + edgeEY) / 2, edgeEX, edgeEY);
+    ctx.lineTo(tipX, tipY);
+    ctx.lineTo(edgeSX, edgeSY);
+    ctx.quadraticCurveTo((edgeSX + pts[0].x) / 2, (edgeSY + pts[0].y) / 2, pts[0].x, pts[0].y);
+    ctx.stroke();
+    // Vein mark inside
+    ctx.lineWidth = sw * 0.4;
+    ctx.beginPath();
+    ctx.moveTo(cx - rx * 0.3, cy - ry * 0.15);
+    ctx.quadraticCurveTo(cx, cy + ry * 0.2, cx + rx * 0.3, cy - ry * 0.1);
+    ctx.stroke();
+    return;
+  }
+  // 2+ points: smooth oval outline with notch V (no fill)
   ctx.beginPath();
   ctx.moveTo(pts[0].x, pts[0].y);
-  // Trace outer points with smooth curves
   for (let i = 1; i < pts.length; i++) {
-    const prev = pts[i - 1], p = pts[i];
-    ctx.quadraticCurveTo((prev.x + p.x) / 2, (prev.y + p.y) / 2, p.x, p.y);
+    const ma = (pts[i - 1].a + pts[i].a) / 2;
+    ctx.quadraticCurveTo(cx + Math.cos(ma) * rx * 1.15, cy + Math.sin(ma) * ry * 1.15, pts[i].x, pts[i].y);
   }
-  // Close the gap: last oval pt -> notch edge end -> tip -> notch edge start -> first oval pt
-  ctx.quadraticCurveTo((pts[pts.length - 1].x + edgeEX) / 2, (pts[pts.length - 1].y + edgeEY) / 2, edgeEX, edgeEY);
+  const last = pts[pts.length - 1];
+  ctx.quadraticCurveTo((last.x + edgeEX) / 2, (last.y + edgeEY) / 2, edgeEX, edgeEY);
   ctx.lineTo(tipX, tipY);
   ctx.lineTo(edgeSX, edgeSY);
   ctx.quadraticCurveTo((edgeSX + pts[0].x) / 2, (edgeSY + pts[0].y) / 2, pts[0].x, pts[0].y);
-  ctx.closePath();
-  ctx.fill();
   ctx.stroke();
-
-  // Vein from notch tip toward center (60% chance)
-  if (rng.uniform() < 0.6) {
-    ctx.lineWidth = sw * 0.45;
-    ctx.beginPath();
-    ctx.moveTo(tipX, tipY);
-    const vl = rx * (0.25 + rng.uniform() * 0.3);
-    const vj = (rng.uniform() - 0.5) * 0.15;
-    ctx.lineTo(cx + Math.cos(notchAngle + vj) * vl, cy + Math.sin(notchAngle + vj) * vl * (ry / rx));
-    ctx.stroke();
-  }
+  // Curved vein mark inside the pad
+  ctx.lineWidth = sw * 0.4;
+  const veinOffX = (rng.uniform() - 0.5) * rx * 0.3;
+  const veinOffY = (rng.uniform() - 0.5) * ry * 0.3;
+  ctx.beginPath();
+  ctx.moveTo(cx - rx * 0.3 + veinOffX, cy - ry * 0.15 + veinOffY);
+  ctx.quadraticCurveTo(
+    cx + (rng.uniform() - 0.5) * rx * 0.2,
+    cy + ry * 0.25 + veinOffY,
+    cx + rx * 0.3 + veinOffX, cy - ry * 0.1 + veinOffY
+  );
+  ctx.stroke();
 }
 
 // Eyebrow puddle: small curved arc
@@ -1043,16 +1055,125 @@ function drawEyebrow(ctx, cx, cy, w, rng) {
   ctx.stroke();
 }
 
-// Grass fan tuft
+// Marsh grass: single M-shaped wavy outline stroke (not individual blades)
 function drawSwampGrassFan(ctx, cx, baseY, size, rng) {
-  const n = 3 + Math.floor(rng.uniform() * 2);
-  const spread = (55 + rng.uniform() * 25) * Math.PI / 180;
-  for (let i = 0; i < n; i++) {
-    const t = n === 1 ? 0.5 : i / (n - 1);
-    const a = -spread / 2 + t * spread + (rng.uniform() - 0.5) * 0.12;
+  const w = size * (1.3 + rng.uniform() * 0.4);
+  const h = size * (0.6 + rng.uniform() * 0.25);
+  const j = (rng.uniform() - 0.5) * size * 0.12;
+  ctx.beginPath();
+  ctx.moveTo(cx - w, baseY);
+  ctx.quadraticCurveTo(cx - w * 0.75 + j, baseY - h * 1.1, cx - w * 0.5, baseY - h);
+  ctx.quadraticCurveTo(cx - w * 0.25 + j, baseY - h * 0.2, cx - w * 0.1, baseY - h * 0.15);
+  ctx.quadraticCurveTo(cx + w * 0.2 + j, baseY - h * 1.0, cx + w * 0.4, baseY - h * 0.9);
+  ctx.quadraticCurveTo(cx + w * 0.7 + j, baseY - h * 0.2, cx + w, baseY);
+  ctx.stroke();
+}
+
+// Small reed: compact oval head (outline), thin stem, root tufts at base
+// Matches the far-bottom-right plant in Swamp.png — smaller than cattail.
+function drawSwampReed(ctx, cx, baseY, h, rng, lineColor, fillColor) {
+  const sw = Math.max(1.5, h * 0.16);
+  const swThin = sw * 0.65;
+  ctx.strokeStyle = lineColor;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  // Oval head — compact, taller than wide
+  const headH = h * (0.35 + rng.uniform() * 0.08);
+  const headW = headH * (0.50 + rng.uniform() * 0.12);
+  const headCy = baseY - h + headH * 0.5;
+  ctx.lineWidth = sw;
+  const N = 12;
+  const headPts = [];
+  for (let i = 0; i < N; i++) {
+    const t = (i / N) * Math.PI * 2;
+    const wob = 1 + (rng.uniform() - 0.5) * 0.08;
+    headPts.push({ x: cx + Math.cos(t) * headW * 0.5 * wob, y: headCy + Math.sin(t) * headH * 0.5 * wob });
+  }
+  ctx.beginPath();
+  for (let i = 0; i < headPts.length; i++) {
+    const p = headPts[i], q = headPts[(i + headPts.length - 1) % headPts.length];
+    const mx = (p.x + q.x) / 2 + (rng.uniform() - 0.5) * sw * 0.25;
+    const my = (p.y + q.y) / 2 + (rng.uniform() - 0.5) * sw * 0.25;
+    if (i === 0) ctx.moveTo(p.x, p.y);
+    else ctx.quadraticCurveTo(mx, my, p.x, p.y);
+  }
+  ctx.closePath();
+  ctx.stroke();
+  // Stem
+  ctx.lineWidth = swThin;
+  const stemTop = baseY - h + headH;
+  const stemBot = baseY - h * 0.10;
+  const lean = (rng.uniform() - 0.5) * h * 0.04;
+  ctx.beginPath();
+  ctx.moveTo(cx, stemTop);
+  ctx.quadraticCurveTo(cx + lean * 0.3, (stemTop + stemBot) / 2, cx + lean, stemBot);
+  ctx.stroke();
+  // Root tufts — a few short strokes spreading outward/downward
+  const nRoots = 2 + Math.floor(rng.uniform() * 2);
+  const rootSpread = (35 + rng.uniform() * 20) * Math.PI / 180;
+  for (let i = 0; i < nRoots; i++) {
+    const t = nRoots === 1 ? 0.5 : i / (nRoots - 1);
+    const a = -rootSpread / 2 + t * rootSpread + (rng.uniform() - 0.5) * 0.12;
+    const rootLen = h * (0.07 + rng.uniform() * 0.05);
+    const sx = cx + lean;
+    const sy = stemBot;
     ctx.beginPath();
-    ctx.moveTo(cx, baseY);
-    ctx.lineTo(cx + Math.sin(a) * size, baseY - Math.cos(a) * size);
+    ctx.moveTo(sx, sy);
+    ctx.lineTo(sx + Math.sin(a) * rootLen, sy + Math.cos(a) * rootLen * 0.4);
+    ctx.stroke();
+  }
+}
+
+// Cattail: vertical oval head (outline), thin stem, root tuft at base
+function drawSwampCattail(ctx, cx, baseY, h, rng, lineColor, fillColor) {
+  const sw = Math.max(1.8, h * 0.14);
+  const swThin = sw * 0.68;
+  ctx.strokeStyle = lineColor;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  const headH = h * (0.30 + rng.uniform() * 0.10);
+  const headW = headH * (0.55 + rng.uniform() * 0.15);
+  const headCy = baseY - h + headH * 0.5;
+  // Oval head (outline only, wobbly)
+  ctx.lineWidth = sw;
+  const N = 14;
+  const headPts = [];
+  for (let i = 0; i < N; i++) {
+    const t = (i / N) * Math.PI * 2;
+    const wob = 1 + (rng.uniform() - 0.5) * 0.10;
+    headPts.push({ x: cx + Math.cos(t) * headW * 0.5 * wob, y: headCy + Math.sin(t) * headH * 0.5 * wob });
+  }
+  ctx.beginPath();
+  for (let i = 0; i < headPts.length; i++) {
+    const p = headPts[i], q = headPts[(i + headPts.length - 1) % headPts.length];
+    const mx = (p.x + q.x) / 2 + (rng.uniform() - 0.5) * sw * 0.3;
+    const my = (p.y + q.y) / 2 + (rng.uniform() - 0.5) * sw * 0.3;
+    if (i === 0) ctx.moveTo(p.x, p.y);
+    else ctx.quadraticCurveTo(mx, my, p.x, p.y);
+  }
+  ctx.closePath();
+  ctx.stroke();
+  // Stem
+  ctx.lineWidth = swThin;
+  const stemTop = baseY - h + headH;
+  const stemBot = baseY - h * 0.12;
+  const lean = (rng.uniform() - 0.5) * h * 0.06;
+  ctx.beginPath();
+  ctx.moveTo(cx, stemTop);
+  ctx.quadraticCurveTo(cx + lean * 0.4, (stemTop + stemBot) / 2, cx + lean, stemBot);
+  ctx.stroke();
+  // Root tuft
+  const nRoots = 2 + Math.floor(rng.uniform() * 2);
+  const rootSpread = (40 + rng.uniform() * 25) * Math.PI / 180;
+  for (let i = 0; i < nRoots; i++) {
+    const t = nRoots === 1 ? 0.5 : i / (nRoots - 1);
+    const a = -rootSpread / 2 + t * rootSpread + (rng.uniform() - 0.5) * 0.15;
+    const rootLen = h * (0.08 + rng.uniform() * 0.07);
+    const sx = cx + lean;
+    const sy = stemBot;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.lineTo(sx + Math.sin(a) * rootLen, sy - Math.cos(a) * rootLen * 0.35);
     ctx.stroke();
   }
 }
@@ -1082,75 +1203,114 @@ function drawSwamps(canvas, swampHexes, opts = {}) {
     return false;
   };
 
-  ctx.strokeStyle = lineColor;
+ ctx.strokeStyle = lineColor;
   ctx.fillStyle = lineColor;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
+  // Collision tracking: each hex maintains a list of placed bounding boxes.
+  // New objects are skipped if their estimated bbox overlaps any existing one.
+  const bboxPad = HEX_SIZE * 0.06;
+  const overlaps = (boxes, x, y, w, h2) => {
+    const x1 = x - w / 2, y1 = y - h2, x2 = x + w / 2, y2 = y + bboxPad;
+    for (const b of boxes) {
+      if (x1 < b.x + b.w / 2 + bboxPad && x2 > b.x - b.w / 2 - bboxPad &&
+          y1 < b.y + bboxPad && y2 > b.y - b.h - bboxPad) return true;
+    }
+    return false;
+  };
+
   for (const h of swampHexes) {
     const center = hexCenter(h.r, h.c, opts);
     const rng = createRng((((seed + h.r * 1737192737) ^ (h.c * 193496639)) ^ 0x5A7A4B2C) >>> 0);
+    const placed = [];
 
-    // Composition: fir top-center, stump lower-left, lily pads scattered, puddles lower-half
-    // Tall fir (upper area)
-    const firH = HEX_SIZE * (0.42 + rng.uniform() * 0.12);
-    const firX = center.x + (rng.uniform() - 0.5) * HEX_SIZE * 0.15;
-    const firY = center.y - HEX_SIZE * 0.15 + rng.uniform() * HEX_SIZE * 0.1;
-    if (!nearRiver(firX, firY)) {
+    // Tall fir — upper area
+    const firH = HEX_SIZE * (0.80 + rng.uniform() * 0.20);
+    const firX = center.x + (rng.uniform() - 0.5) * HEX_SIZE * 0.25;
+    const firY = center.y - HEX_SIZE * (0.30 + rng.uniform() * 0.20);
+    if (!nearRiver(firX, firY) && !overlaps(placed, firX, firY, firH * 0.55, firH)) {
       const firRng = createRng((((seed + h.r * 73856093) ^ (h.c * 19349663)) ^ 0x8A2B3C4D) >>> 0);
       drawSwampFir(ctx, firX, firY, firH, firRng, lineColor, fillColor);
+      placed.push({ x: firX, y: firY, w: firH * 0.55, h: firH });
     }
 
-    // Broken stump (lower area, 60% chance)
-    if (rng.uniform() < 0.6) {
-      const stumpH = HEX_SIZE * (0.18 + rng.uniform() * 0.1);
-      const stumpX = center.x + (rng.uniform() - 0.5) * HEX_SIZE * 0.5;
-      const stumpY = center.y + HEX_SIZE * (0.1 + rng.uniform() * 0.2);
-      if (!nearRiver(stumpX, stumpY)) {
+    // Broken stump — mid-left (70% chance)
+    if (rng.uniform() < 0.7) {
+      const stumpH = HEX_SIZE * (0.30 + rng.uniform() * 0.12);
+      const stumpX = center.x - HEX_SIZE * (0.15 + rng.uniform() * 0.35);
+      const stumpY = center.y + HEX_SIZE * (0.08 + rng.uniform() * 0.10);
+      if (!nearRiver(stumpX, stumpY) && !overlaps(placed, stumpX, stumpY, stumpH * 0.8, stumpH)) {
         const stumpRng = createRng((((seed + h.r * 73856093) ^ (h.c * 19349663)) ^ 0x5D6E7F8A) >>> 0);
         drawSwampStump(ctx, stumpX, stumpY, stumpH, stumpRng, lineColor, fillColor);
+        placed.push({ x: stumpX, y: stumpY, w: stumpH * 0.8, h: stumpH });
       }
     }
 
-    // Lily pads (2-3, scattered)
+    // Notched lily pads — mid-right (2-3 scattered)
     ctx.strokeStyle = lineColor;
-    ctx.lineWidth = Math.max(1.5, HEX_SIZE * 0.045);
+    ctx.lineWidth = Math.max(2, HEX_SIZE * 0.05);
     ctx.fillStyle = fillColor;
     const nPads = 2 + Math.floor(rng.uniform() * 2);
     for (let i = 0; i < nPads; i++) {
-      const ang = rng.uniform() * Math.PI * 2;
-      const rad = Math.sqrt(rng.uniform()) * HEX_SIZE * 0.6;
-      const x = center.x + Math.cos(ang) * rad;
-      const y = center.y + Math.sin(ang) * rad;
+      const x = center.x + HEX_SIZE * (0.20 + rng.uniform() * 0.30);
+      const y = center.y + (rng.uniform() - 0.5) * HEX_SIZE * 0.30;
       if (nearRiver(x, y)) continue;
-      const rx2 = HEX_SIZE * (0.10 + rng.uniform() * 0.06);
-      const ry2 = HEX_SIZE * (0.05 + rng.uniform() * 0.03);
+      const rx2 = HEX_SIZE * (0.13 + rng.uniform() * 0.07);
+      const ry2 = HEX_SIZE * (0.06 + rng.uniform() * 0.04);
+      if (overlaps(placed, x, y, rx2 * 2, ry2 * 2)) continue;
       const padRng = createRng((((seed + h.r * 73856093) ^ (h.c * 19349663) ^ (i * 2654435761)) ^ 0x1A2B3C4D) >>> 0);
       drawSwampLilyPad(ctx, x, y, rx2, ry2, padRng, lineColor, fillColor);
+      placed.push({ x, y, w: rx2 * 2, h: ry2 * 2 });
     }
 
-    // Eyebrow puddles (1-2)
+    // Eyebrow puddles — lower-right (1-2)
     ctx.strokeStyle = lineColor;
-    ctx.lineWidth = Math.max(2, HEX_SIZE * 0.055);
+    ctx.lineWidth = Math.max(2.5, HEX_SIZE * 0.06);
     const nPuddles = 1 + Math.floor(rng.uniform() * 2);
     for (let i = 0; i < nPuddles; i++) {
-      const ang = rng.uniform() * Math.PI * 2;
-      const rad = Math.sqrt(rng.uniform()) * HEX_SIZE * 0.5;
-      const x = center.x + Math.cos(ang) * rad;
-      const y = center.y + Math.sin(ang) * rad;
+      const x = center.x + HEX_SIZE * (0.20 + rng.uniform() * 0.30);
+      const y = center.y + HEX_SIZE * (0.20 + rng.uniform() * 0.20);
       if (nearRiver(x, y)) continue;
-      const ew = HEX_SIZE * (0.15 + rng.uniform() * 0.12);
+      const ew = HEX_SIZE * (0.18 + rng.uniform() * 0.15);
+      if (overlaps(placed, x, y, ew, ew * 0.5)) continue;
       drawEyebrow(ctx, x, y, ew, rng);
+      placed.push({ x, y, w: ew, h: ew * 0.5 });
     }
 
-    // Grass tuft (lower edge, 40% chance)
+    // Grass tuft — lower-left (40% chance)
     if (rng.uniform() < 0.4) {
-      ctx.lineWidth = Math.max(1.5, HEX_SIZE * 0.045);
-      const gx = center.x + (rng.uniform() - 0.5) * HEX_SIZE * 0.4;
-      const gy = center.y + HEX_SIZE * (0.2 + rng.uniform() * 0.15);
-      if (!nearRiver(gx, gy)) {
-        const gs = HEX_SIZE * (0.10 + rng.uniform() * 0.06);
-        drawSwampGrassFan(ctx, gx, gy, gs, rng);
+      ctx.lineWidth = Math.max(2, HEX_SIZE * 0.05);
+      const gSize = HEX_SIZE * (0.12 + rng.uniform() * 0.06);
+      const gx = center.x - HEX_SIZE * (0.20 + rng.uniform() * 0.25);
+      const gy = center.y + HEX_SIZE * (0.25 + rng.uniform() * 0.15);
+      if (!nearRiver(gx, gy) && !overlaps(placed, gx, gy, gSize * 2.6, gSize)) {
+        drawSwampGrassFan(ctx, gx, gy, gSize, rng);
+        placed.push({ x: gx, y: gy, w: gSize * 2.6, h: gSize });
+      }
+    }
+
+    // Small reed — lower-center (50% chance)
+    if (rng.uniform() < 0.5) {
+      const reedH = HEX_SIZE * (0.16 + rng.uniform() * 0.06);
+      const reedX = center.x + (rng.uniform() - 0.5) * HEX_SIZE * 0.15;
+      const reedY = center.y + HEX_SIZE * (0.28 + rng.uniform() * 0.12);
+      if (!nearRiver(reedX, reedY) && !overlaps(placed, reedX, reedY, reedH * 0.3, reedH)) {
+        const reedRng = createRng((((seed + h.r * 73856093) ^ (h.c * 19349663)) ^ 0x3C4D5E6F) >>> 0);
+        drawSwampReed(ctx, reedX, reedY, reedH, reedRng, lineColor, fillColor);
+        placed.push({ x: reedX, y: reedY, w: reedH * 0.3, h: reedH });
+      }
+    }
+
+    // Cattail — lower-right (60% chance)
+    if (rng.uniform() < 0.6) {
+      const catH = HEX_SIZE * (0.18 + rng.uniform() * 0.06);
+      const catX = center.x + HEX_SIZE * (0.20 + rng.uniform() * 0.30);
+      const catY = center.y + HEX_SIZE * (0.28 + rng.uniform() * 0.12);
+      if (!nearRiver(catX, catY) && !overlaps(placed, catX, catY, catH * 0.35, catH)) {
+        const catRng = createRng((((seed + h.r * 73856093) ^ (h.c * 19349663)) ^ 0x6C7D8E9F) >>> 0);
+        drawSwampCattail(ctx, catX, catY, catH, catRng, lineColor, fillColor);
+        placed.push({ x: catX, y: catY, w: catH * 0.35, h: catH });
       }
     }
   }

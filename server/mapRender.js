@@ -19,12 +19,12 @@ class RenderQueue {
     });
   }
 
-  _onMessage({ jobId, ok, pngBuffer, error }) {
+  _onMessage({ jobId, ok, pngBuffer, biomeTags, error }) {
     const cb = this._pending.get(jobId);
     this._pending.delete(jobId);
     this._busy = false;
     if (cb) {
-      if (ok) cb.resolve(pngBuffer);
+      if (ok) cb.resolve({ pngBuffer, biomeTags });
       else cb.reject(new Error(error));
     }
     this._processNext();

@@ -21,6 +21,15 @@
         <div id="marker-banner"></div>
       </div>
     </div>
+    <div id="biome-legend" class="biome-legend">
+      <div class="legend-title">Biomes</div>
+      <div class="legend-row" data-biome="mountains">Mountains</div>
+      <div class="legend-row" data-biome="hills">Hills</div>
+      <div class="legend-row" data-biome="swamp">Swamp</div>
+      <div class="legend-row" data-biome="forest">Forest</div>
+      <div class="legend-row" data-biome="plains">Plains</div>
+      <div class="legend-row" data-biome="city">City</div>
+    </div>
   </div>
 
   <!-- Sidebar -->
@@ -48,17 +57,23 @@
       <ul id="player-list" class="player-list"></ul>
     </div>
 
-    <!-- Fog controls (host only) -->
-    <div id="host-controls" class="sidebar-section" style="display:none;">
-      <h3>Fog of War</h3>
+    <!-- Options -->
+    <div id="options-section" class="sidebar-section">
+      <h3>Options</h3>
       <div class="fog-controls">
+        <div id="fog-controls" style="display:none;">
+          <label class="fog-row">
+            <input type="checkbox" id="fog-host" checked>
+            Show fog to me
+          </label>
+          <label class="fog-row">
+            <input type="checkbox" id="fog-players" checked>
+            Show fog to players
+          </label>
+        </div>
         <label class="fog-row">
-          <input type="checkbox" id="fog-host" checked>
-          Show fog to me
-        </label>
-        <label class="fog-row">
-          <input type="checkbox" id="fog-players" checked>
-          Show fog to players
+          <input type="checkbox" id="biome-toggle">
+          Biome colors
         </label>
       </div>
     </div>
@@ -100,6 +115,6 @@
 <div id="toast" class="toast"></div>
 
 <script src="/socket.io/socket.io.js"></script>
-<script type="module" src="/js/lobby.js?v=2"></script>
+<script type="module" src="/js/lobby.js?v=9"></script>
 </body>
 </html>

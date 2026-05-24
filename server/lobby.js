@@ -24,6 +24,7 @@ class Lobby {
 
     this.status = 'rendering';
     this.pngBuffer = null;
+    this.biomeTags = {};
 
     this.hostToken = hostToken;
     this.hostName = hostName;
@@ -69,8 +70,9 @@ class Lobby {
     return null;
   }
 
-  setReady(pngBuffer) {
+  setReady(pngBuffer, biomeTags) {
     this.pngBuffer = pngBuffer;
+    this.biomeTags = biomeTags || {};
     this.status = 'preview';
   }
 
@@ -84,6 +86,7 @@ class Lobby {
   regenerate() {
     this.status = 'rendering';
     this.pngBuffer = null;
+    this.biomeTags = {};
     // Generate a new seed for the regenerated map
     this.seed = crypto.randomInt(0, 2 ** 32);
     // Clear all game state from preview
@@ -137,8 +140,14 @@ class Lobby {
 
     if (!this.marker) return { error: 'marker_not_placed' };
 
-    const nbrs = hexNeighbors(this.marker.row, this.marker.col, this.rows, this.cols);
-    if (!nbrs.some(([r, c]) => r === row && c === col)) return { error: 'not_in_ring' };
+    const target = `${row},${col}`;
+    if (!this.revealed.has(target)) {
+      let adjToRevealed = false;
+      for (const [nr, nc] of hexNeighbors(row, col, this.rows, this.cols)) {
+        if (this.revealed.has(`${nr},${nc}`)) { adjToRevealed = true; break; }
+      }
+      if (!adjToRevealed) return { error: 'not_in_ring' };
+    }
 
     // Cancel any existing request from this player
     let cancelledRequestId = null;
@@ -225,6 +234,7 @@ class Lobby {
       players: this._playersWire(),
       hostName: this.hostName,
       hostConnected: this.hostConnected,
+      biomeTags: this.biomeTags,
       createdAt: this.createdAt,
     };
   }
@@ -252,6 +262,7 @@ class Lobby {
       revealed: this._revealedTiles(),
       fog: this.fog,
       pendingRequests: this._pendingRequestsWire({ sort: true }),
+      biomeTags: this.biomeTags,
     };
     if (role === 'host') return { ...base, role: 'host' };
     return { ...base, role: 'player', playerId };

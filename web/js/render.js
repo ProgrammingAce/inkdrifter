@@ -1,5 +1,14 @@
 import { hexCenter, hexVertices, HEX_SIZE, neighborSet, neighborsOfSet } from './hex.js';
 
+export const BIOME_COLORS = {
+  mountains: { overlay: 'rgba(140,140,170,0.32)', swatch: 'rgba(140,140,170,0.70)' },
+  hills:     { overlay: 'rgba(190,140,90,0.30)', swatch: 'rgba(190,140,90,0.70)' },
+  swamp:     { overlay: 'rgba(150,80,160,0.32)', swatch: 'rgba(150,80,160,0.75)' },
+  forest:    { overlay: 'rgba(40,130,50,0.30)', swatch: 'rgba(40,130,50,0.70)' },
+  plains:    { overlay: 'rgba(220,200,80,0.28)', swatch: 'rgba(220,200,80,0.60)' },
+  city:      { overlay: 'rgba(220,140,50,0.35)', swatch: 'rgba(220,140,50,0.75)' },
+};
+
 function fillHex(ctx, cx, cy, size) {
   const verts = hexVertices(cx, cy, size);
   ctx.beginPath();
@@ -39,8 +48,8 @@ export function loadBaseMap(canvas, url) {
   });
 }
 
-export function renderOverlay(ctx, state, isHost, dragPos) {
-  const { rows, cols, originX, originY, hexSize, marker, fog, pendingRequests } = state;
+export function renderOverlay(ctx, state, isHost, dragPos, biomeOn) {
+  const { rows, cols, originX, originY, hexSize, marker, fog, pendingRequests, biomeTags } = state;
   const W = ctx.canvas.width;
   const H = ctx.canvas.height;
   ctx.clearRect(0, 0, W, H);
@@ -51,9 +60,10 @@ export function renderOverlay(ctx, state, isHost, dragPos) {
   const hostFogEnabled = isHost && !inPreview && fog.host;
   const playerFogEnabled = !isHost && fog.players;
 
+  const revealed = state._revealedSet;
+  const ringSet = revealed.size > 0 ? neighborsOfSet(revealed, rows, cols) : new Set();
+
   if (hostFogEnabled || playerFogEnabled) {
-    const revealed = state._revealedSet;
-    const ringSet = revealed.size > 0 ? neighborsOfSet(revealed, rows, cols) : new Set();
     const isHostFog = isHost && fog.host;
 
     const fullFogAlpha = isHostFog ? 0.85 : 1.0;
@@ -88,6 +98,22 @@ export function renderOverlay(ctx, state, isHost, dragPos) {
           const { x, y } = hexCenter(r, c, originX, originY);
           fillHex(ctx, x, y, hexSize + 2);
         }
+      }
+    }
+  }
+
+  // Draw biome overlay on revealed/ring hexes (or all hexes in preview/no-fog)
+  if (biomeOn && biomeTags && Object.keys(biomeTags).length > 0) {
+    const hasFog = hostFogEnabled || playerFogEnabled;
+    const visibleHexes = (inPreview || !hasFog) ? null : new Set([...revealed, ...ringSet]);
+    for (const [key, tag] of Object.entries(biomeTags)) {
+      if (visibleHexes && !visibleHexes.has(key)) continue;
+      const [r, c] = key.split(',').map(Number);
+      const { x, y } = hexCenter(r, c, originX, originY);
+      const color = BIOME_COLORS[tag]?.overlay;
+      if (color) {
+        ctx.fillStyle = color;
+        fillHex(ctx, x, y, hexSize);
       }
     }
   }
@@ -141,12 +167,12 @@ export function renderOverlay(ctx, state, isHost, dragPos) {
 
 let _activeRafId = null;
 
-export function startRenderLoop(ctx, getState, isHost, getDragPos) {
+export function startRenderLoop(ctx, getState, isHost, getDragPos, getBiomeOn) {
   if (_activeRafId) cancelAnimationFrame(_activeRafId);
   let rafId = null;
   function loop() {
-    const state = getState();
-    if (state) renderOverlay(ctx, state, isHost(), getDragPos());
+    const st = getState();
+    if (st) renderOverlay(ctx, st, isHost(), getDragPos(), getBiomeOn());
     rafId = requestAnimationFrame(loop);
     _activeRafId = rafId;
   }

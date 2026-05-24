@@ -1,4 +1,4 @@
-import { pixelToHex, hexCenter, neighborSet, HEX_SIZE } from './hex.js';
+import { pixelToHex, hexCenter, neighborSet, neighborsOfSet, HEX_SIZE } from './hex.js';
 import { EVENTS } from './socket.js';
 
 export function initInput({ overlayCanvas, getState, getIsHost, socket, onDragPos }) {
@@ -31,15 +31,17 @@ export function initInput({ overlayCanvas, getState, getIsHost, socket, onDragPo
 
   window.addEventListener('mousemove', (e) => {
     if (!dragging) {
-      // Update cursor for ring tiles (player only)
+      // Update cursor for visible tiles (player only)
       if (!getIsHost()) {
         const state = getState();
         if (!state || !state.marker) return;
         const { px, py } = canvasPos(e);
         const hex = pixelToHex(px, py, state.originX, state.originY, state.rows, state.cols);
         if (hex) {
-          const ring = neighborSet(state.marker.row, state.marker.col, state.rows, state.cols);
-          overlayCanvas.style.cursor = ring.has(`${hex.row},${hex.col}`) ? 'pointer' : 'default';
+          const key = `${hex.row},${hex.col}`;
+          const revealed = state._revealedSet;
+          const inRing = revealed.has(key) || neighborsOfSet(revealed, state.rows, state.cols).has(key);
+          overlayCanvas.style.cursor = inRing ? 'pointer' : 'default';
         } else {
           overlayCanvas.style.cursor = 'default';
         }
@@ -82,9 +84,15 @@ export function initInput({ overlayCanvas, getState, getIsHost, socket, onDragPo
     const { px, py } = canvasPos(e);
     const hex = pixelToHex(px, py, state.originX, state.originY, state.rows, state.cols);
     if (!hex) return;
-    const ring = neighborSet(state.marker.row, state.marker.col, state.rows, state.cols);
-    if (ring.has(`${hex.row},${hex.col}`)) {
+    const key = `${hex.row},${hex.col}`;
+    const revealed = state._revealedSet;
+    if (revealed.has(key)) {
       socket.emit(EVENTS.MOVE_REQUEST, { row: hex.row, col: hex.col });
+    } else {
+      const ring = neighborsOfSet(revealed, state.rows, state.cols);
+      if (ring.has(key)) {
+        socket.emit(EVENTS.MOVE_REQUEST, { row: hex.row, col: hex.col });
+      }
     }
   });
 }

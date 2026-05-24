@@ -503,3 +503,46 @@ input[type="text"]:focus, input[type="number"]:focus { border-color: var(--text-
   transition: background 0.15s;
 }
 .btn-primary:hover { background: var(--accent-hover); }
+
+/* ── Biome legend ── */
+.biome-legend {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+  z-index: 20;
+  background: rgba(26,14,5,0.92);
+  border: 2px solid var(--border);
+  border-radius: 3px;
+  padding: 10px 14px 10px 10px;
+  display: none;
+  backdrop-filter: blur(4px);
+  outline: 1px solid var(--border);
+  outline-offset: 2px;
+}
+
+.legend-title {
+  font-family: var(--font-head);
+  font-size: 0.75rem;
+  color: var(--text-gold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  color: var(--text-light);
+  padding: 2px 0;
+}
+
+.legend-swatch {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  border-radius: 2px;
+  border: 1px solid rgba(107,58,31,0.6);
+}
