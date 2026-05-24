@@ -751,7 +751,18 @@ function drawForests(canvas, forestHexes, opts = {}) {
     return false;
   };
 
+  // Build set of pond/lake hex keys to skip trees on water
+  const waterHexSet = new Set();
+  if (opts.ponds) {
+    for (const p of opts.ponds) waterHexSet.add(`${p.r},${p.c}`);
+  }
+  if (opts.lakesInfo && opts.lakesInfo.hexes) {
+    for (const l of opts.lakesInfo.hexes) waterHexSet.add(`${l.r},${l.c}`);
+  }
+
   for (const h of forestHexes) {
+    // Skip drawing trees if this hex is a pond or lake
+    if (waterHexSet.has(`${h.r},${h.c}`)) continue;
     const center = hexCenter(h.r, h.c, opts);
     const rng = createRng((((seed + h.r * 2246822519) ^ (h.c * 3266489917)) ^ 0x4F07E575) >>> 0);
 
@@ -768,7 +779,7 @@ function drawForests(canvas, forestHexes, opts = {}) {
       trees.push({ x: heroX, baseY: heroBaseY, w: heroW, h: heroH });
     }
 
-    const nTrees = 5 + Math.floor(rng.uniform() * 2);
+    const nTrees = 6 + Math.floor(rng.uniform() * 2);
     let attempts = 0;
     while (trees.length < nTrees + 1 && attempts < nTrees * 14) {
       attempts++;
@@ -964,14 +975,15 @@ function drawSwampStump(ctx, cx, baseY, h, rng, lineColor, fillColor) {
 
 // Notched lily pad: oval outline with wedge notch and small curved vein
 function drawSwampLilyPad(ctx, cx, cy, rx, ry, rng, lineColor, fillColor) {
-  const sw = Math.max(1.5, rx * 0.3);
+  const sw = Math.max(1.5, rx * 0.22);
   ctx.strokeStyle = lineColor;
   ctx.lineWidth = sw;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
+  // Notch params: constrained to always produce a clean shape
   const notchAngle = rng.uniform() * Math.PI * 2;
-  const notchHalfSpan = 0.35 + rng.uniform() * 0.25;
-  const notchDepth = 0.4 + rng.uniform() * 0.3;
+  const notchHalfSpan = 0.30 + rng.uniform() * 0.15; // 0.30-0.45
+  const notchDepth = 0.45 + rng.uniform() * 0.15; // 0.45-0.60
   const N = 24;
   const tipX = cx + Math.cos(notchAngle) * rx * notchDepth;
   const tipY = cy + Math.sin(notchAngle) * ry * notchDepth;
@@ -979,75 +991,53 @@ function drawSwampLilyPad(ctx, cx, cy, rx, ry, rng, lineColor, fillColor) {
   const edgeSY = cy + Math.sin(notchAngle - notchHalfSpan) * ry;
   const edgeEX = cx + Math.cos(notchAngle + notchHalfSpan) * rx;
   const edgeEY = cy + Math.sin(notchAngle + notchHalfSpan) * ry;
+  // Build smooth oval points (skip notch wedge region)
   const pts = [];
   for (let i = 0; i < N; i++) {
     const t = (i / N) * Math.PI * 2;
     let d = t - notchAngle;
     d = ((d + Math.PI) % (Math.PI * 2)) - Math.PI;
-    if (d < -Math.PI) d += Math.PI * 2;
-    if (Math.abs(d) < notchHalfSpan) continue;
+    if (Math.abs(d) < notchHalfSpan + 0.08) continue; // small safety gap
     pts.push({ x: cx + Math.cos(t) * rx, y: cy + Math.sin(t) * ry, a: t });
   }
-  // Handle degenerate notch (0 points)
-  if (!pts.length) {
-    ctx.beginPath();
-    ctx.moveTo(edgeSX, edgeSY);
-    ctx.lineTo(tipX, tipY);
-    ctx.lineTo(edgeEX, edgeEY);
-    ctx.stroke();
-    // Vein mark inside
-    ctx.lineWidth = sw * 0.4;
-    ctx.beginPath();
-    ctx.moveTo(cx - rx * 0.3, cy - ry * 0.15);
-    ctx.quadraticCurveTo(cx, cy + ry * 0.2, cx + rx * 0.3, cy - ry * 0.1);
-    ctx.stroke();
-    return;
-  }
-  // Handle single surviving point
-  if (pts.length === 1) {
-    ctx.beginPath();
+  // Draw the two arc segments (left of notch, right of notch)
+  ctx.beginPath();
+  if (pts.length >= 2) {
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) {
+      const ma = (pts[i - 1].a + pts[i].a) / 2;
+      ctx.quadraticCurveTo(cx + Math.cos(ma) * rx * 1.10, cy + Math.sin(ma) * ry * 1.10, pts[i].x, pts[i].y);
+    }
+    const last = pts[pts.length - 1];
+    ctx.quadraticCurveTo((last.x + edgeEX) / 2, (last.y + edgeEY) / 2, edgeEX, edgeEY);
+  } else if (pts.length === 1) {
     ctx.moveTo(pts[0].x, pts[0].y);
     ctx.quadraticCurveTo((pts[0].x + edgeEX) / 2, (pts[0].y + edgeEY) / 2, edgeEX, edgeEY);
-    ctx.lineTo(tipX, tipY);
-    ctx.lineTo(edgeSX, edgeSY);
-    ctx.quadraticCurveTo((edgeSX + pts[0].x) / 2, (edgeSY + pts[0].y) / 2, pts[0].x, pts[0].y);
-    ctx.stroke();
-    // Vein mark inside
-    ctx.lineWidth = sw * 0.4;
-    ctx.beginPath();
-    ctx.moveTo(cx - rx * 0.3, cy - ry * 0.15);
-    ctx.quadraticCurveTo(cx, cy + ry * 0.2, cx + rx * 0.3, cy - ry * 0.1);
-    ctx.stroke();
-    return;
+  } else {
+    ctx.moveTo(edgeSX, edgeSY);
   }
-  // 2+ points: smooth oval outline with notch V (no fill)
-  ctx.beginPath();
-  ctx.moveTo(pts[0].x, pts[0].y);
-  for (let i = 1; i < pts.length; i++) {
-    const ma = (pts[i - 1].a + pts[i].a) / 2;
-    ctx.quadraticCurveTo(cx + Math.cos(ma) * rx * 1.15, cy + Math.sin(ma) * ry * 1.15, pts[i].x, pts[i].y);
-  }
-  const last = pts[pts.length - 1];
-  ctx.quadraticCurveTo((last.x + edgeEX) / 2, (last.y + edgeEY) / 2, edgeEX, edgeEY);
+  // V-notch: straight lines from both arc ends to tip
   ctx.lineTo(tipX, tipY);
   ctx.lineTo(edgeSX, edgeSY);
-  ctx.quadraticCurveTo((edgeSX + pts[0].x) / 2, (edgeSY + pts[0].y) / 2, pts[0].x, pts[0].y);
+  if (pts.length >= 2) {
+    ctx.quadraticCurveTo((edgeSX + pts[0].x) / 2, (edgeSY + pts[0].y) / 2, pts[0].x, pts[0].y);
+  }
   ctx.stroke();
-  // Curved vein mark inside the pad
-  ctx.lineWidth = sw * 0.4;
-  const veinOffX = (rng.uniform() - 0.5) * rx * 0.3;
-  const veinOffY = (rng.uniform() - 0.5) * ry * 0.3;
+  // Vein mark inside — a small S-curve from notch tip toward center
+  ctx.lineWidth = sw * 0.35;
+  const veinLen = rx * (0.25 + rng.uniform() * 0.20);
+  const veinDir = notchAngle + Math.PI + (rng.uniform() - 0.5) * 0.3;
+  const vx1 = cx + Math.cos(notchAngle) * rx * (notchDepth - 0.15);
+  const vy1 = cy + Math.sin(notchAngle) * ry * (notchDepth - 0.15);
+  const vx2 = cx + Math.cos(veinDir) * veinLen;
+  const vy2 = cy + Math.sin(veinDir) * veinLen * (ry / rx);
+  const vmx = (vx1 + vx2) / 2 + (rng.uniform() - 0.5) * rx * 0.15;
+  const vmy = (vy1 + vy2) / 2 + (rng.uniform() - 0.5) * ry * 0.15;
   ctx.beginPath();
-  ctx.moveTo(cx - rx * 0.3 + veinOffX, cy - ry * 0.15 + veinOffY);
-  ctx.quadraticCurveTo(
-    cx + (rng.uniform() - 0.5) * rx * 0.2,
-    cy + ry * 0.25 + veinOffY,
-    cx + rx * 0.3 + veinOffX, cy - ry * 0.1 + veinOffY
-  );
+  ctx.moveTo(vx1, vy1);
+  ctx.quadraticCurveTo(vmx, vmy, vx2, vy2);
   ctx.stroke();
 }
-
-// Eyebrow puddle: small curved arc
 function drawEyebrow(ctx, cx, cy, w, rng) {
   ctx.beginPath();
   ctx.moveTo(cx - w / 2, cy);
@@ -1220,97 +1210,115 @@ function drawSwamps(canvas, swampHexes, opts = {}) {
     return false;
   };
 
+  // Shuffle array in-place (Fisher-Yates)
+  const shuffle = (arr, r) => {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(r.uniform() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+  };
+
   for (const h of swampHexes) {
     const center = hexCenter(h.r, h.c, opts);
     const rng = createRng((((seed + h.r * 1737192737) ^ (h.c * 193496639)) ^ 0x5A7A4B2C) >>> 0);
     const placed = [];
 
-    // Tall fir — upper area
-    const firH = HEX_SIZE * (0.80 + rng.uniform() * 0.20);
-    const firX = center.x + (rng.uniform() - 0.5) * HEX_SIZE * 0.25;
-    const firY = center.y - HEX_SIZE * (0.30 + rng.uniform() * 0.20);
-    if (!nearRiver(firX, firY) && !overlaps(placed, firX, firY, firH * 0.55, firH)) {
-      const firRng = createRng((((seed + h.r * 73856093) ^ (h.c * 19349663)) ^ 0x8A2B3C4D) >>> 0);
-      drawSwampFir(ctx, firX, firY, firH, firRng, lineColor, fillColor);
-      placed.push({ x: firX, y: firY, w: firH * 0.55, h: firH });
+    // Build random object manifest: decide how many of each type to place
+    const manifest = [];
+    // 1-2 firs
+    for (let i = 0; i < (1 + Math.floor(rng.uniform() * 2)); i++) {
+      manifest.push({ type: 'fir', idx: i });
+    }
+    // 0-2 stumps
+    for (let i = 0; i < Math.floor(rng.uniform() * 3); i++) {
+      manifest.push({ type: 'stump', idx: i });
+    }
+    // 1-3 lily pads
+    for (let i = 0; i < (1 + Math.floor(rng.uniform() * 3)); i++) {
+      manifest.push({ type: 'lily_pad', idx: i });
+    }
+    // 0-2 puddles
+    for (let i = 0; i < Math.floor(rng.uniform() * 3); i++) {
+      manifest.push({ type: 'puddle', idx: i });
+    }
+    // 0-2 grass
+    for (let i = 0; i < Math.floor(rng.uniform() * 3); i++) {
+      manifest.push({ type: 'grass', idx: i });
+    }
+    // 0-2 reeds
+    for (let i = 0; i < Math.floor(rng.uniform() * 3); i++) {
+      manifest.push({ type: 'reed', idx: i });
+    }
+    // 0-2 cattails
+    for (let i = 0; i < Math.floor(rng.uniform() * 3); i++) {
+      manifest.push({ type: 'cattail', idx: i });
     }
 
-    // Broken stump — mid-left (70% chance)
-    if (rng.uniform() < 0.7) {
-      const stumpH = HEX_SIZE * (0.30 + rng.uniform() * 0.12);
-      const stumpX = center.x - HEX_SIZE * (0.15 + rng.uniform() * 0.35);
-      const stumpY = center.y + HEX_SIZE * (0.08 + rng.uniform() * 0.10);
-      if (!nearRiver(stumpX, stumpY) && !overlaps(placed, stumpX, stumpY, stumpH * 0.8, stumpH)) {
-        const stumpRng = createRng((((seed + h.r * 73856093) ^ (h.c * 19349663)) ^ 0x5D6E7F8A) >>> 0);
-        drawSwampStump(ctx, stumpX, stumpY, stumpH, stumpRng, lineColor, fillColor);
-        placed.push({ x: stumpX, y: stumpY, w: stumpH * 0.8, h: stumpH });
+    // Shuffle so types interleave randomly
+    shuffle(manifest, rng);
+
+    // Try placing each object: compute size once, retry position on collision
+    const halfHex = HEX_SIZE * 0.55;
+    for (const item of manifest) {
+      const objRng = createRng((((seed + h.r * 73856093) ^ (h.c * 19349663)) ^ (item.idx * 2654435761) ^ (item.type.charCodeAt(0) * 16807)) >>> 0);
+      let placedThis = false;
+
+      // Compute deterministic size from objRng
+      let size, bw, bh;
+      if (item.type === 'fir') {
+        size = HEX_SIZE * (0.80 + objRng.uniform() * 0.20);
+        bw = size * 0.55; bh = size;
+      } else if (item.type === 'stump') {
+        size = HEX_SIZE * (0.30 + objRng.uniform() * 0.12);
+        bw = size * 0.8; bh = size;
+      } else if (item.type === 'lily_pad') {
+        bw = HEX_SIZE * (0.14 + objRng.uniform() * 0.04);
+        bh = HEX_SIZE * (0.07 + objRng.uniform() * 0.03);
+        bw *= 2; bh *= 2;
+      } else if (item.type === 'puddle') {
+        size = HEX_SIZE * (0.18 + objRng.uniform() * 0.15);
+        bw = size; bh = size * 0.5;
+      } else if (item.type === 'grass') {
+        size = HEX_SIZE * (0.12 + objRng.uniform() * 0.06);
+        bw = size * 2.6; bh = size;
+      } else if (item.type === 'reed') {
+        size = HEX_SIZE * (0.16 + objRng.uniform() * 0.06);
+        bw = size * 0.3; bh = size;
+      } else if (item.type === 'cattail') {
+        size = HEX_SIZE * (0.18 + objRng.uniform() * 0.06);
+        bw = size * 0.35; bh = size;
       }
-    }
 
-    // Notched lily pads — mid-right (2-3 scattered)
-    ctx.strokeStyle = lineColor;
-    ctx.lineWidth = Math.max(2, HEX_SIZE * 0.05);
-    ctx.fillStyle = fillColor;
-    const nPads = 2 + Math.floor(rng.uniform() * 2);
-    for (let i = 0; i < nPads; i++) {
-      const x = center.x + HEX_SIZE * (0.20 + rng.uniform() * 0.30);
-      const y = center.y + (rng.uniform() - 0.5) * HEX_SIZE * 0.30;
-      if (nearRiver(x, y)) continue;
-      const rx2 = HEX_SIZE * (0.13 + rng.uniform() * 0.07);
-      const ry2 = HEX_SIZE * (0.06 + rng.uniform() * 0.04);
-      if (overlaps(placed, x, y, rx2 * 2, ry2 * 2)) continue;
-      const padRng = createRng((((seed + h.r * 73856093) ^ (h.c * 19349663) ^ (i * 2654435761)) ^ 0x1A2B3C4D) >>> 0);
-      drawSwampLilyPad(ctx, x, y, rx2, ry2, padRng, lineColor, fillColor);
-      placed.push({ x, y, w: rx2 * 2, h: ry2 * 2 });
-    }
+      for (let attempt = 0; attempt < 12; attempt++) {
+        const x = center.x + (rng.uniform() - 0.5) * halfHex * 2;
+        const y = center.y + (rng.uniform() - 0.5) * halfHex * 2;
 
-    // Eyebrow puddles — lower-right (1-2)
-    ctx.strokeStyle = lineColor;
-    ctx.lineWidth = Math.max(2.5, HEX_SIZE * 0.06);
-    const nPuddles = 1 + Math.floor(rng.uniform() * 2);
-    for (let i = 0; i < nPuddles; i++) {
-      const x = center.x + HEX_SIZE * (0.20 + rng.uniform() * 0.30);
-      const y = center.y + HEX_SIZE * (0.20 + rng.uniform() * 0.20);
-      if (nearRiver(x, y)) continue;
-      const ew = HEX_SIZE * (0.18 + rng.uniform() * 0.15);
-      if (overlaps(placed, x, y, ew, ew * 0.5)) continue;
-      drawEyebrow(ctx, x, y, ew, rng);
-      placed.push({ x, y, w: ew, h: ew * 0.5 });
-    }
+        if (nearRiver(x, y) || overlaps(placed, x, y, bw, bh)) continue;
 
-    // Grass tuft — lower-left (40% chance)
-    if (rng.uniform() < 0.4) {
-      ctx.lineWidth = Math.max(2, HEX_SIZE * 0.05);
-      const gSize = HEX_SIZE * (0.12 + rng.uniform() * 0.06);
-      const gx = center.x - HEX_SIZE * (0.20 + rng.uniform() * 0.25);
-      const gy = center.y + HEX_SIZE * (0.25 + rng.uniform() * 0.15);
-      if (!nearRiver(gx, gy) && !overlaps(placed, gx, gy, gSize * 2.6, gSize)) {
-        drawSwampGrassFan(ctx, gx, gy, gSize, rng);
-        placed.push({ x: gx, y: gy, w: gSize * 2.6, h: gSize });
-      }
-    }
-
-    // Small reed — lower-center (50% chance)
-    if (rng.uniform() < 0.5) {
-      const reedH = HEX_SIZE * (0.16 + rng.uniform() * 0.06);
-      const reedX = center.x + (rng.uniform() - 0.5) * HEX_SIZE * 0.15;
-      const reedY = center.y + HEX_SIZE * (0.28 + rng.uniform() * 0.12);
-      if (!nearRiver(reedX, reedY) && !overlaps(placed, reedX, reedY, reedH * 0.3, reedH)) {
-        const reedRng = createRng((((seed + h.r * 73856093) ^ (h.c * 19349663)) ^ 0x3C4D5E6F) >>> 0);
-        drawSwampReed(ctx, reedX, reedY, reedH, reedRng, lineColor, fillColor);
-        placed.push({ x: reedX, y: reedY, w: reedH * 0.3, h: reedH });
-      }
-    }
-
-    // Cattail — lower-right (60% chance)
-    if (rng.uniform() < 0.6) {
-      const catH = HEX_SIZE * (0.18 + rng.uniform() * 0.06);
-      const catX = center.x + HEX_SIZE * (0.20 + rng.uniform() * 0.30);
-      const catY = center.y + HEX_SIZE * (0.28 + rng.uniform() * 0.12);
-      if (!nearRiver(catX, catY) && !overlaps(placed, catX, catY, catH * 0.35, catH)) {
-        const catRng = createRng((((seed + h.r * 73856093) ^ (h.c * 19349663)) ^ 0x6C7D8E9F) >>> 0);
-        drawSwampCattail(ctx, catX, catY, catH, catRng, lineColor, fillColor);
-        placed.push({ x: catX, y: catY, w: catH * 0.35, h: catH });
+        if (item.type === 'fir') {
+          drawSwampFir(ctx, x, y, size, objRng, lineColor, fillColor);
+        } else if (item.type === 'stump') {
+          drawSwampStump(ctx, x, y, size, objRng, lineColor, fillColor);
+        } else if (item.type === 'lily_pad') {
+          ctx.strokeStyle = lineColor;
+          ctx.lineWidth = Math.max(1.5, (bw / 2) * 0.22);
+          ctx.fillStyle = fillColor;
+          drawSwampLilyPad(ctx, x, y, bw / 2, bh / 2, objRng, lineColor, fillColor);
+        } else if (item.type === 'puddle') {
+          ctx.strokeStyle = lineColor;
+          ctx.lineWidth = Math.max(2.5, HEX_SIZE * 0.06);
+          drawEyebrow(ctx, x, y, size, objRng);
+        } else if (item.type === 'grass') {
+          ctx.strokeStyle = lineColor;
+          ctx.lineWidth = Math.max(2, HEX_SIZE * 0.05);
+          drawSwampGrassFan(ctx, x, y, size, objRng);
+        } else if (item.type === 'reed') {
+          drawSwampReed(ctx, x, y, size, objRng, lineColor, fillColor);
+        } else if (item.type === 'cattail') {
+          drawSwampCattail(ctx, x, y, size, objRng, lineColor, fillColor);
+        }
+        placed.push({ x, y, w: bw, h: bh });
+        placedThis = true; break;
       }
     }
   }

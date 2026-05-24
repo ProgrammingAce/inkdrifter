@@ -463,7 +463,7 @@ function renderMap(opts = {}) {
     drawHills(out, hillHexes, { ...gridOpts, seed, rivers });
   }
   if (forestHexes.length > 0) {
-    drawForests(out, forestHexes, { ...gridOpts, seed, rivers });
+    drawForests(out, forestHexes, { ...gridOpts, seed, rivers, ponds, lakesInfo });
   }
   if (mountainHexes.length > 0) {
     drawMountains(out, mountainHexes, { ...gridOpts, seed });
