@@ -23,7 +23,7 @@ const {
   placeLakes, findRiverTerminusEndpoints, placeTerminusLakes,
   placePonds,
 } = require('./biomes.js');
-const { drawPonds, drawMountains, drawHills, drawGrass, drawForests, drawSwamps } = require('./terrain.js');
+const { drawPonds, drawMountains, drawHills, drawGrass, drawForests, drawSwamps } = require('./terrain');
 const { drawCities } = require('./cities.js');
 const { drawHexGrid, paintParchment } = require('./grid.js');
 

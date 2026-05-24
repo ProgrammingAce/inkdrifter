@@ -1,5 +1,5 @@
 // inkdrifter — hex map generator. Source split across src/.
-// Public surface is preserved for back-compat (server/, gen_*.js, tests).
+// Public surface is preserved for back-compat with server/ consumers.
 
 const constants = require('./src/constants.js');
 const rng = require('./src/rng.js');
@@ -7,7 +7,7 @@ const hex = require('./src/hex.js');
 const rivers = require('./src/rivers.js');
 const ocean = require('./src/ocean.js');
 const grid = require('./src/grid.js');
-const terrain = require('./src/terrain.js');
+const terrain = require('./src/terrain');
 const cities = require('./src/cities.js');
 const { renderMap } = require('./src/renderMap.js');
 
