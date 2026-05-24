@@ -52,13 +52,8 @@ class RenderQueue {
     return new Promise((resolve, reject) => {
       const jobId = ++this._jobId;
       const msg = { jobId, seed, rows, cols };
-      if (!this._busy) {
-        this._busy = true;
-        this._pending.set(jobId, { resolve, reject });
-        this._worker.postMessage(msg);
-      } else {
-        this._queue.push({ jobId, msg, resolve, reject });
-      }
+      this._queue.push({ jobId, msg, resolve, reject });
+      this._processNext();
     });
   }
 }

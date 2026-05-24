@@ -1,3 +1,5 @@
+import { MAX_PLAYERS_PER_LOBBY } from './socket.js';
+
 const createForm = document.getElementById('create-form');
 const joinForm = document.getElementById('join-form');
 const createStatus = document.getElementById('create-status');
@@ -126,7 +128,7 @@ joinForm.addEventListener('submit', async (e) => {
     if (!res.ok) {
       const msgs = {
         no_such_lobby: 'Lobby not found. Check the code.',
-        lobby_full: 'Lobby is full (8 players max).',
+        lobby_full: `Lobby is full (${MAX_PLAYERS_PER_LOBBY} players max).`,
         name_taken: 'That name is already taken.',
         lobby_not_ready: 'Lobby is still loading. Try again in a moment.',
         lobby_closed: 'Lobby has been closed.',

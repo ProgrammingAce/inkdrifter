@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const path = require('path');
 const { renderQueue } = require('./mapRender.js');
 const { LobbyManager } = require('./lobbyManager.js');
-const { hexNeighbors, MIN_GRID, MAX_GRID } = require('./lobby.js');
+const { hexNeighbors, MIN_GRID, MAX_GRID, MAX_PLAYERS_PER_LOBBY } = require('./lobby.js');
 const { EVENTS, ERROR_CODES } = require('./protocol.js');
 const {
   HEX_SIZE, HEX_W, HEX_H,
@@ -92,11 +92,21 @@ function enqueueRender(code, { onReady, errorLabel = 'Render' } = {}) {
   });
 }
 
+// Strict integer parse: rejects "5abc", "5.5", booleans, NaN, etc.
+function toInt(raw) {
+  if (typeof raw === 'number') return Number.isInteger(raw) ? raw : null;
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!/^-?\d+$/.test(trimmed)) return null;
+  const n = Number(trimmed);
+  return Number.isInteger(n) ? n : null;
+}
+
 function parseGridParams(req) {
-  const rows = parseInt(req.body.rows, 10);
-  const cols = parseInt(req.body.cols, 10);
-  if (isNaN(rows) || rows < MIN_GRID || rows > MAX_GRID) return { error: 'bad_rows' };
-  if (isNaN(cols) || cols < MIN_GRID || cols > MAX_GRID) return { error: 'bad_cols' };
+  const rows = toInt(req.body.rows);
+  const cols = toInt(req.body.cols);
+  if (rows == null || rows < MIN_GRID || rows > MAX_GRID) return { error: 'bad_rows' };
+  if (cols == null || cols < MIN_GRID || cols > MAX_GRID) return { error: 'bad_cols' };
   return { rows, cols };
 }
 
@@ -104,8 +114,8 @@ function parseSeed(raw, { required = false } = {}) {
   if (raw == null || raw === '') {
     return required ? { error: 'bad_seed' } : { seed: crypto.randomInt(0, 2 ** 32) };
   }
-  const seed = parseInt(raw, 10);
-  if (isNaN(seed) || seed < 0 || seed > 0xFFFFFFFF) return { error: 'bad_seed' };
+  const seed = toInt(raw);
+  if (seed == null || seed < 0 || seed > 0xFFFFFFFF) return { error: 'bad_seed' };
   return { seed };
 }
 
@@ -164,7 +174,7 @@ app.post('/api/lobbies/:code/join', (req, res) => {
   const lobby = manager.getLobby(code);
   if (!lobby) return res.status(404).json({ error: ERROR_CODES.NO_SUCH_LOBBY });
   if (lobby.status !== 'ready') return res.status(409).json({ error: ERROR_CODES.LOBBY_NOT_READY });
-  if (lobby.playerCount >= 8) return res.status(409).json({ error: ERROR_CODES.LOBBY_FULL });
+  if (lobby.playerCount >= MAX_PLAYERS_PER_LOBBY) return res.status(409).json({ error: ERROR_CODES.LOBBY_FULL });
 
   const name = sanitizeName(req.body.playerName);
   if (!name) return res.status(400).json({ error: 'bad_player_name' });
@@ -177,17 +187,32 @@ app.post('/api/lobbies/:code/join', (req, res) => {
   res.json({ playerToken: result.playerToken, playerId: result.playerId });
 });
 
+// Token gate: lobby contents (map image, game state) are private to the host
+// and joined players. Accepts ?token= or Authorization: Bearer <token>.
+function authorizeLobby(req, lobby) {
+  const auth = req.get('authorization') || '';
+  const bearer = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+  const token = bearer || (typeof req.query.token === 'string' ? req.query.token : null);
+  if (!token) return false;
+  if (token === lobby.hostToken) return true;
+  return Object.values(lobby.players).some(p => p.token === token);
+}
+
 app.get('/lobbies/:code/map.png', (req, res) => {
   const lobby = manager.getLobby(req.params.code);
   if (!lobby || !lobby.pngBuffer) return res.status(404).send('Not found');
+  if (!authorizeLobby(req, lobby)) return res.status(403).send('Forbidden');
   res.set('Content-Type', 'image/png');
-  res.set('Cache-Control', 'public, max-age=31536000, immutable');
+  // Private: each lobby's map is tied to a per-user token, so don't allow
+  // shared caches to keep it.
+  res.set('Cache-Control', 'private, max-age=31536000, immutable');
   res.send(lobby.pngBuffer);
 });
 
 app.get('/lobbies/:code/game-state.json', (req, res) => {
   const lobby = manager.getLobby(req.params.code);
   if (!lobby) return res.status(404).json({ error: 'no_such_lobby' });
+  if (!authorizeLobby(req, lobby)) return res.status(403).json({ error: 'forbidden' });
   res.set('Content-Type', 'application/json');
   res.json(lobby.toJSONExport());
 });
@@ -288,13 +313,13 @@ io.on('connection', (socket) => {
     if (!lobby) return;
     if (lobby.status !== 'ready') return emitError(socket, ERROR_CODES.LOBBY_NOT_READY, 'Map not ready');
     if (!lobby.canMarkerMove()) return; // silently drop
-    row = parseInt(row, 10);
-    col = parseInt(col, 10);
-    if (isNaN(row) || isNaN(col) || row < 0 || row >= lobby.rows || col < 0 || col >= lobby.cols) {
+    const r = toInt(row);
+    const c = toInt(col);
+    if (r == null || c == null || r < 0 || r >= lobby.rows || c < 0 || c >= lobby.cols) {
       return emitError(socket, ERROR_CODES.OUT_OF_BOUNDS, 'Position out of bounds');
     }
-    const { revealedDelta, cancelled } = lobby.moveMarker(row, col);
-    io.to(lobby.code).emit(EVENTS.MARKER_MOVED, { row, col, revealedDelta });
+    const { revealedDelta, cancelled } = lobby.moveMarker(r, c);
+    io.to(lobby.code).emit(EVENTS.MARKER_MOVED, { row: r, col: c, revealedDelta });
     for (const req of cancelled) {
       io.to(lobby.code).emit(EVENTS.REQUEST_CANCELLED, { requestId: req.requestId, reason: 'marker_moved' });
     }
@@ -306,12 +331,12 @@ io.on('connection', (socket) => {
     const lobby = manager.getLobby(socket.data.lobbyCode);
     if (!lobby) return;
     if (lobby.status !== 'ready') return emitError(socket, ERROR_CODES.LOBBY_NOT_READY, 'Map not ready');
-    row = parseInt(row, 10);
-    col = parseInt(col, 10);
-    if (isNaN(row) || isNaN(col) || row < 0 || row >= lobby.rows || col < 0 || col >= lobby.cols) {
+    const r = toInt(row);
+    const c = toInt(col);
+    if (r == null || c == null || r < 0 || r >= lobby.rows || c < 0 || c >= lobby.cols) {
       return emitError(socket, ERROR_CODES.OUT_OF_BOUNDS, 'Position out of bounds');
     }
-    const result = lobby.addMoveRequest(socket.data.playerId, row, col);
+    const result = lobby.addMoveRequest(socket.data.playerId, r, c);
     if (result.error) {
       emitError(socket, result.error, result.error);
       if (result.disconnect) socket.disconnect();
@@ -328,10 +353,10 @@ io.on('connection', (socket) => {
     io.to(lobby.code).emit(EVENTS.MOVE_REQUESTED, {
       playerId: socket.data.playerId,
       name: player.name,
-      row,
-      col,
+      row: r,
+      col: c,
       requestId: result.requestId,
-      at: lobby.pendingRequests[result.requestId].at,
+      at: result.at,
     });
   });
 
@@ -387,7 +412,6 @@ io.on('connection', (socket) => {
     if (socket.data.isHost && lobby.hostSocketId === socket.id) {
       lobby.hostConnected = false;
       lobby.hostSocketId = null;
-      io.to(code).emit(EVENTS.LOBBY_STATE, lobby.toWire('player', null)); // notify players
       broadcastLobbyState(code);
       manager.startGrace(code);
     } else if (socket.data.playerId) {

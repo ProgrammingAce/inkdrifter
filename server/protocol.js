@@ -37,4 +37,7 @@ const ERROR_CODES = {
   NAME_TAKEN: 'name_taken',
 };
 
-module.exports = { EVENTS, ERROR_CODES };
+// Max players in a lobby, host included. Mirror in web/js/socket.js.
+const MAX_PLAYERS_PER_LOBBY = 8;
+
+module.exports = { EVENTS, ERROR_CODES, MAX_PLAYERS_PER_LOBBY };

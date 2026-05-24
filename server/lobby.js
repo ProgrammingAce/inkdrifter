@@ -8,6 +8,7 @@ const {
   gridCanvasSize,
   hexNeighborsBounded: hexNeighbors,
 } = require('../index.js');
+const { MAX_PLAYERS_PER_LOBBY } = require('./protocol.js');
 
 class Lobby {
   constructor({ code, seed, rows, cols, hostToken, hostName }) {
@@ -52,7 +53,8 @@ class Lobby {
   }
 
   addPlayer(playerName) {
-    if (Object.keys(this.players).length >= 7) return null;
+    if (Object.keys(this.players).length >= MAX_PLAYERS_PER_LOBBY - 1) return null;
+    this.lastActivityAt = Date.now();
     const playerId = 'p_' + crypto.randomBytes(3).toString('hex');
     const playerToken = crypto.randomUUID();
     this.players[playerId] = { name: playerName, token: playerToken, connected: false, socketId: null };
@@ -93,20 +95,19 @@ class Lobby {
     this.revealed = new Set();
     this.marker = null;
     this.pendingRequests = {};
+    // Reset per-player rate-limit counters (new game = fresh slate)
+    this._moveReqLast = {};
+    this._moveReqViolations = {};
+    this._markerMoveCount = 0;
+    this._markerMoveWindowStart = Date.now();
     return true;
   }
 
   moveMarker(row, col) {
-    const prevRevealed = new Set(this.revealed);
+    const key = `${row},${col}`;
+    const revealedDelta = this.revealed.has(key) ? [] : [[row, col]];
+    this.revealed.add(key);
     this.marker = { row, col };
-    this.revealed.add(`${row},${col}`);
-    const revealedDelta = [];
-    for (const key of this.revealed) {
-      if (!prevRevealed.has(key)) {
-        const [r, c] = key.split(',').map(Number);
-        revealedDelta.push([r, c]);
-      }
-    }
     const cancelled = Object.entries(this.pendingRequests).map(([requestId, req]) => ({ requestId, ...req }));
     this.pendingRequests = {};
     this.lastActivityAt = Date.now();
@@ -161,8 +162,8 @@ class Lobby {
 
     const newRequestId = 'req_' + crypto.randomBytes(4).toString('hex');
     this.pendingRequests[newRequestId] = { playerId, row, col, at: now };
-    this.lastActivityAt = Date.now();
-    return { requestId: newRequestId, cancelledRequestId };
+    this.lastActivityAt = now;
+    return { requestId: newRequestId, cancelledRequestId, at: now };
   }
 
   cancelPlayerRequests(playerId) {
@@ -189,11 +190,33 @@ class Lobby {
   }
 
   loadImportState({ status, fog, marker, revealedTiles }) {
-    this.fog = fog || { host: true, players: true };
-    this.revealed = new Set(revealedTiles.map(([r, c]) => `${r},${c}`));
-    if (marker) {
+    const validFog = fog
+      && typeof fog.host === 'boolean'
+      && typeof fog.players === 'boolean'
+      ? { host: fog.host, players: fog.players }
+      : { host: true, players: true };
+    this.fog = validFog;
+
+    const inBounds = (r, c) =>
+      Number.isInteger(r) && Number.isInteger(c) &&
+      r >= 0 && r < this.rows && c >= 0 && c < this.cols;
+
+    const revealed = new Set();
+    if (Array.isArray(revealedTiles)) {
+      for (const tile of revealedTiles) {
+        if (!Array.isArray(tile) || tile.length !== 2) continue;
+        const [r, c] = tile;
+        if (inBounds(r, c)) revealed.add(`${r},${c}`);
+      }
+    }
+    this.revealed = revealed;
+
+    if (marker && inBounds(marker.row, marker.col)) {
       this.marker = { row: marker.row, col: marker.col };
     }
+    // Only 'ready' is honored on import; any other value (including 'preview')
+    // leaves the lobby in its current 'rendering' state, which will transition
+    // to 'preview' once the worker finishes.
     if (status === 'ready') {
       this.status = 'ready';
     }
@@ -269,4 +292,4 @@ class Lobby {
   }
 }
 
-module.exports = { Lobby, hexNeighbors, MIN_GRID, MAX_GRID };
+module.exports = { Lobby, hexNeighbors, MIN_GRID, MAX_GRID, MAX_PLAYERS_PER_LOBBY };

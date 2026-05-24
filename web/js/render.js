@@ -31,19 +31,26 @@ export function loadBaseMap(canvas, url) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     let settled = false;
-    const done = (result) => {
+    const timeoutId = setTimeout(() => {
       if (settled) return;
       settled = true;
-      result();
-    };
+      reject(new Error('Image load timeout'));
+    }, 15000);
     img.onload = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
       const ctx = canvas.getContext('2d');
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      done(() => resolve());
+      resolve();
     };
-    img.onerror = () => done(() => reject(new Error('Failed to load image')));
-    setTimeout(() => done(() => reject(new Error('Image load timeout'))), 15000);
+    img.onerror = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      reject(new Error('Failed to load image'));
+    };
     img.src = url;
   });
 }

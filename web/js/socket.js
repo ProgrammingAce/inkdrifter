@@ -19,6 +19,9 @@ export const EVENTS = {
   REQUEST_CANCELLED: 'request_cancelled',
 };
 
+// Keep in sync with server/protocol.js MAX_PLAYERS_PER_LOBBY.
+export const MAX_PLAYERS_PER_LOBBY = 8;
+
 export const ERROR_CODES = {
   BAD_AUTH: 'bad_auth',
   NOT_HOST: 'not_host',

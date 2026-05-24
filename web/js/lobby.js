@@ -8,6 +8,8 @@ const hostToken = localStorage.getItem(`hostToken_${code}`);
 const playerToken = localStorage.getItem(`playerToken_${code}`);
 const isHost = !!hostToken;
 const myPlayerId = localStorage.getItem(`playerId_${code}`);
+const authToken = hostToken || playerToken;
+const tokenQS = authToken ? `token=${encodeURIComponent(authToken)}` : '';
 
 let state = null;
 let mapLoaded = false;
@@ -56,7 +58,6 @@ function showToast(msg, isError = false) {
 
 // ── State helpers ─────────────────────────────────────────────────────────────
 function applyState(data) {
-  const prevMarker = state?.marker;
   state = data;
   state._revealedSet = new Set(data.revealed.map(([r, c]) => `${r},${c}`));
   if (lobbyCodeEl) lobbyCodeEl.textContent = data.code;
@@ -66,7 +67,6 @@ function applyState(data) {
   updateFogControls();
   updateMarkerBanner();
   updateLegendVisibility();
-  return prevMarker;
 }
 
 function applyRevealDelta(revealedDelta) {
@@ -204,7 +204,7 @@ function hidePreviewUI() {
 // ── Map loading ───────────────────────────────────────────────────────────────
 async function reloadMap() {
   try {
-    await loadBaseMap(baseCanvas, `/lobbies/${code}/map.png`);
+    await loadBaseMap(baseCanvas, `/lobbies/${code}/map.png?${tokenQS}`);
   } catch (err) {
     console.error('Failed to reload map image:', err);
     showToast('Failed to reload map.', true);
@@ -225,7 +225,7 @@ async function initMap() {
   mapStack.style.height = H + 'px';
 
   try {
-    const mapUrl = `/lobbies/${code}/map.png?v=${state.seed ?? 0}`;
+    const mapUrl = `/lobbies/${code}/map.png?v=${state.seed ?? 0}&${tokenQS}`;
     await loadBaseMap(baseCanvas, mapUrl);
   } catch (err) {
     console.error('Failed to load map image:', err);
@@ -269,7 +269,7 @@ function tryLoadMap() {
       clearTimeout(_mapLoadTimeout);
     })
     .catch((err) => {
-      console.error('[DEBUG] Map load failed:', err);
+      console.error('Map load failed:', err);
     })
     .finally(() => {
       _mapLoadPending = false;
@@ -312,7 +312,7 @@ fetch(`/api/lobbies/${code}`)
   .then(res => res.ok ? res.json() : null)
   .then(lobbyStatus => {
     if (!lobbyStatus) return;
-    if (lobbyStatus.status === 'preview' && !mapLoaded) {
+    if (lobbyStatus.status === 'preview' && !mapLoaded && !_mapLoadPending) {
       const initialData = {
         ...lobbyStatus,
         _revealedSet: new Set(),
@@ -329,7 +329,7 @@ fetch(`/api/lobbies/${code}`)
         showPreviewUI();
         clearTimeout(_mapLoadTimeout);
       }).catch(err => {
-        console.error('[DEBUG] Initial map load failed:', err);
+        console.error('Initial map load failed:', err);
         showToast('Failed to load map. Please refresh.', true);
       }).finally(() => {
         _mapLoadPending = false;
@@ -458,7 +458,7 @@ if (isHost && fogControlsEl) {
   });
   document.getElementById('export-png-btn')?.addEventListener('click', () => {
     const link = document.createElement('a');
-    link.href = `/lobbies/${code}/map.png?download=1&t=${Date.now()}`;
+    link.href = `/lobbies/${code}/map.png?download=1&t=${Date.now()}&${tokenQS}`;
     link.download = `inkdrifter-map-${code}.png`;
     document.body.appendChild(link);
     link.click();
@@ -466,7 +466,7 @@ if (isHost && fogControlsEl) {
     showToast('Map export started.');
   });
   document.getElementById('export-json-btn')?.addEventListener('click', () => {
-    fetch(`/lobbies/${code}/game-state.json?t=${Date.now()}`)
+    fetch(`/lobbies/${code}/game-state.json?t=${Date.now()}&${tokenQS}`)
       .then(res => {
         if (!res.ok) throw new Error('Export failed');
         return res.json();
@@ -509,7 +509,7 @@ if (!hostToken && !playerToken) {
     socket.emit(EVENTS.AUTH, { code, role, token });
   });
   socket.on('connect_error', (err) => {
-    console.error('[DEBUG] Socket connection error:', err);
+    console.error('Socket connection error:', err);
     showToast('Connection error. Please refresh.', true);
   });
 }

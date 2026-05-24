@@ -1,7 +1,16 @@
 import { pixelToHex, hexCenter, neighborSet, neighborsOfSet, HEX_SIZE } from './hex.js';
 import { EVENTS } from './socket.js';
 
+// Guard against double-binding: initMap can be called multiple times per
+// session (regenerate, fallback load), and window-level mousemove/mouseup
+// listeners would otherwise accumulate. All inputs (overlayCanvas, getState,
+// socket, onDragPos) are stable references in the caller, so reusing the
+// first closure is correct.
+let _bound = false;
+
 export function initInput({ overlayCanvas, getState, getIsHost, socket, onDragPos }) {
+  if (_bound) return;
+  _bound = true;
   let dragging = false;
 
   function canvasPos(e) {
