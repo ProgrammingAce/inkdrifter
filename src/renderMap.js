@@ -23,7 +23,7 @@ const {
   placeLakes, findRiverTerminusEndpoints, placeTerminusLakes,
   placePonds,
 } = require('./biomes.js');
-const { drawPonds, drawMountains, drawHills, drawGrass, drawForests } = require('./terrain.js');
+const { drawPonds, drawMountains, drawHills, drawGrass, drawForests, drawSwamps } = require('./terrain.js');
 const { drawCities } = require('./cities.js');
 const { drawHexGrid, paintParchment } = require('./grid.js');
 
@@ -427,6 +427,7 @@ function renderMap(opts = {}) {
   const plainsHexes = [];
   const forestHexes = [];
   const cityHexes = [];
+  const swampHexes = [];
   for (const [key, tag] of biomesOut.tags) {
     const [r, c] = key.split(',').map(Number);
     if (tag === 'mountains') mountainHexes.push({ r, c });
@@ -434,6 +435,7 @@ function renderMap(opts = {}) {
     else if (tag === 'plains') plainsHexes.push({ r, c });
     else if (tag === 'forest') forestHexes.push({ r, c });
     else if (tag === 'city') cityHexes.push({ r, c });
+    else if (tag === 'swamp') swampHexes.push({ r, c });
   }
 
   const himg = hiCtx.getImageData(0, 0, W * S, H * S);
@@ -468,6 +470,9 @@ function renderMap(opts = {}) {
   }
   if (cityHexes.length > 0) {
     drawCities(out, cityHexes, { ...gridOpts, seed, rivers, capital: biomesOut.cities[0] });
+  }
+  if (swampHexes.length > 0) {
+    drawSwamps(out, swampHexes, { ...gridOpts, seed, rivers });
   }
 
   const vigCtx = out.getContext('2d');

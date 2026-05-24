@@ -802,4 +802,358 @@ function drawForests(canvas, forestHexes, opts = {}) {
   }
 }
 
-module.exports = { drawPonds, drawMountains, drawHills, drawGrass, drawForests };
+// ── Swamps ─────────────────────────────────────────────────────────────────
+// Per-hex swamp tile: slim firs, broken stumps, notched lily pads, eyebrow
+// puddles. Matches Swamp.png reference art. Scaled to hex size.
+
+// Tall slim fir: single wavy silhouette, stroked trunk
+function drawSwampFir(ctx, cx, baseY, h, rng, lineColor, fillColor) {
+  const sw = treeStroke() * (0.85 + rng.uniform() * 0.3);
+  ctx.strokeStyle = lineColor;
+  ctx.fillStyle = fillColor;
+  ctx.lineWidth = sw;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  const trunkH = h * (0.22 + rng.uniform() * 0.06);
+  const canopyH = h - trunkH;
+  const skirtY = baseY - trunkH;
+  const apexY = baseY - h;
+  const halfW = h * (0.045 + rng.uniform() * 0.02);
+  const nLobes = 3 + Math.floor(rng.uniform() * 2);
+
+  // Build left/right sides independently for asymmetry
+  const makeSide = (sgn) => {
+    const pts = [];
+    pts.push({ x: cx + sgn * halfW * (0.9 + rng.uniform() * 0.2), y: skirtY });
+    for (let i = 0; i < nLobes; i++) {
+      const vf = (trunkH / h) + i * (1 - trunkH / h - 0.15) / nLobes;
+      const tf = vf + (1 - trunkH / h - 0.15) / nLobes * 0.5;
+      const vw = halfW * (1 - i * 0.18) * (0.75 + rng.uniform() * 0.1);
+      const tw = halfW * (1 - (i + 1) * 0.15) * (0.9 + rng.uniform() * 0.1);
+      pts.push({ x: cx + sgn * vw, y: baseY - h * vf });
+      pts.push({ x: cx + sgn * tw, y: baseY - h * tf });
+    }
+    pts.push({ x: cx, y: apexY });
+    return pts;
+  };
+
+  const L = makeSide(-1);
+  const R = makeSide(+1).reverse();
+
+  // Single continuous silhouette
+  ctx.beginPath();
+  ctx.moveTo(L[0].x, L[0].y);
+  for (let i = 1; i < L.length; i++) {
+    const prev = L[i - 1], p = L[i];
+    ctx.quadraticCurveTo((prev.x + p.x) / 2, (prev.y + p.y) / 2, p.x, p.y);
+  }
+  for (let i = 0; i < R.length; i++) {
+    const prev = i === 0 ? L[L.length - 1] : R[i - 1];
+    const p = R[i];
+    ctx.quadraticCurveTo((prev.x + p.x) / 2, (prev.y + p.y) / 2, p.x, p.y);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Trunk: two wavy stroked lines
+  const trunkW = h * 0.025;
+  const wobble = () => (rng.uniform() - 0.5) * trunkW * 0.5;
+  ctx.lineWidth = sw * 0.7;
+  // Left trunk edge
+  ctx.beginPath();
+  ctx.moveTo(cx - trunkW + wobble(), skirtY);
+  ctx.quadraticCurveTo(cx - trunkW - trunkW * 0.3 + wobble(), baseY - trunkH * 0.5, cx - trunkW * 0.8 + wobble(), baseY);
+  ctx.stroke();
+  // Right trunk edge
+  ctx.beginPath();
+  ctx.moveTo(cx + trunkW + wobble(), skirtY);
+  ctx.quadraticCurveTo(cx + trunkW + trunkW * 0.3 + wobble(), baseY - trunkH * 0.5, cx + trunkW * 0.8 + wobble(), baseY);
+  ctx.stroke();
+}
+
+// Round bush: bumpy cloud canopy with trunk
+function drawSwampRound(ctx, cx, baseY, h, rng, lineColor, fillColor) {
+  const hw = h * 0.35;
+  const trunkH = h * 0.14;
+  const canopyBaseY = baseY - trunkH;
+  const canopyH = h - trunkH;
+  const cy = canopyBaseY - canopyH * 0.5;
+  const rx = hw;
+  const ry = canopyH * 0.55;
+  const sw = treeStroke() * (0.7 + rng.uniform() * 0.4);
+  ctx.strokeStyle = lineColor;
+  ctx.fillStyle = fillColor;
+  ctx.lineWidth = sw;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  const N = 16;
+  const lobeN = 3 + Math.floor(rng.uniform() * 3);
+  const lobePhase = rng.uniform() * Math.PI * 2;
+  ctx.beginPath();
+  for (let i = 0; i < N; i++) {
+    const t = (i / N) * Math.PI * 2;
+    const lobe = Math.sin(t * lobeN + lobePhase) * 0.10;
+    const wobble = 1 + lobe + (rng.uniform() - 0.5) * 0.10;
+    const x = cx + Math.cos(t) * rx * wobble;
+    const y = cy + Math.sin(t) * ry * wobble;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  const tH = Math.max(0.5, hw * 0.15);
+  ctx.beginPath();
+  ctx.moveTo(cx - tH, canopyBaseY);
+  ctx.lineTo(cx - tH, baseY);
+  ctx.lineTo(cx + tH, baseY);
+  ctx.lineTo(cx + tH, canopyBaseY);
+  ctx.stroke();
+}
+
+// Broken stump: jagged top, tapered body, branch stubs
+function drawSwampStump(ctx, cx, baseY, h, rng, lineColor, fillColor) {
+  const stumpH = h * (0.30 + rng.uniform() * 0.15);
+  const baseHW = h * (0.08 + rng.uniform() * 0.04);
+  const topHW = baseHW * (0.6 + rng.uniform() * 0.25);
+  const sw = treeStroke() * (0.8 + rng.uniform() * 0.4);
+  ctx.strokeStyle = lineColor;
+  ctx.fillStyle = fillColor;
+  ctx.lineWidth = sw;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  const nPeaks = 3 + Math.floor(rng.uniform() * 2);
+  const peakPts = [];
+  for (let i = 0; i < nPeaks; i++) {
+    const t = nPeaks === 1 ? 0.5 : i / (nPeaks - 1);
+    const x = cx - topHW + t * topHW * 2;
+    const y = baseY - stumpH - rng.uniform() * stumpH * 0.15;
+    peakPts.push({ x, y });
+  }
+
+  ctx.beginPath();
+  ctx.moveTo(cx - baseHW, baseY);
+  ctx.quadraticCurveTo(cx - baseHW - baseHW * 0.1, baseY - stumpH * 0.5, peakPts[0].x, peakPts[0].y);
+  for (let i = 1; i < peakPts.length; i++) {
+    const p = peakPts[i], prev = peakPts[i - 1];
+    const mx = (prev.x + p.x) / 2;
+    const my = (prev.y + p.y) / 2 - stumpH * 0.04;
+    ctx.quadraticCurveTo(mx, my, p.x, p.y);
+  }
+  ctx.quadraticCurveTo(
+    (peakPts[peakPts.length - 1].x + cx + topHW) / 2,
+    (peakPts[peakPts.length - 1].y + baseY) / 2 + stumpH * 0.05,
+    cx + baseHW, baseY
+  );
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Branch stubs on sides
+  const nStubs = 1 + Math.floor(rng.uniform() * 2);
+  ctx.lineWidth = sw * 0.7;
+  for (let i = 0; i < nStubs; i++) {
+    const side = rng.uniform() < 0.5 ? -1 : 1;
+    const st = 0.3 + rng.uniform() * 0.5;
+    const sy = baseY - stumpH * st;
+    const sl = h * (0.04 + rng.uniform() * 0.06);
+    const sa = side * (0.3 + rng.uniform() * 0.5);
+    ctx.beginPath();
+    ctx.moveTo(cx + side * topHW * 0.4, sy);
+    const ex = cx + side * topHW * 0.4 + Math.sin(sa) * sl;
+    const ey = sy - Math.cos(sa) * sl * 0.5;
+    ctx.quadraticCurveTo((cx + ex) / 2, (sy + ey) / 2, ex, ey);
+    ctx.stroke();
+  }
+}
+
+// Notched lily pad: oval with wedge slit, smooth outline
+function drawSwampLilyPad(ctx, cx, cy, rx, ry, rng, lineColor, fillColor) {
+  const sw = Math.max(1.5, rx * 0.3);
+  ctx.strokeStyle = lineColor;
+  ctx.fillStyle = fillColor;
+  ctx.lineWidth = sw;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  const notchAngle = rng.uniform() * Math.PI * 2;
+  const notchHalfSpan = 0.35 + rng.uniform() * 0.25;
+  const notchDepth = 0.3 + rng.uniform() * 0.2;
+  const N = 24;
+
+  // Collect outline points, skip the notch arc
+  const pts = [];
+  for (let i = 0; i < N; i++) {
+    const t = (i / N) * Math.PI * 2;
+    let rel = ((t - notchAngle + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+    if (Math.abs(rel) <= notchHalfSpan) continue;
+    const wobble = 1 + (rng.uniform() - 0.5) * 0.1;
+    pts.push({
+      x: cx + Math.cos(t) * rx * wobble,
+      y: cy + Math.sin(t) * ry * wobble,
+    });
+  }
+  if (pts.length < 3) return;
+
+  // Notch tip point
+  const tipX = cx + Math.cos(notchAngle) * rx * notchDepth;
+  const tipY = cy + Math.sin(notchAngle) * ry * notchDepth;
+  const edgeSX = cx + Math.cos(notchAngle - notchHalfSpan) * rx;
+  const edgeSY = cy + Math.sin(notchAngle - notchHalfSpan) * ry;
+  const edgeEX = cx + Math.cos(notchAngle + notchHalfSpan) * rx;
+  const edgeEY = cy + Math.sin(notchAngle + notchHalfSpan) * ry;
+
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  // Trace outer points with smooth curves
+  for (let i = 1; i < pts.length; i++) {
+    const prev = pts[i - 1], p = pts[i];
+    ctx.quadraticCurveTo((prev.x + p.x) / 2, (prev.y + p.y) / 2, p.x, p.y);
+  }
+  // Close the gap: last oval pt -> notch edge end -> tip -> notch edge start -> first oval pt
+  ctx.quadraticCurveTo((pts[pts.length - 1].x + edgeEX) / 2, (pts[pts.length - 1].y + edgeEY) / 2, edgeEX, edgeEY);
+  ctx.lineTo(tipX, tipY);
+  ctx.lineTo(edgeSX, edgeSY);
+  ctx.quadraticCurveTo((edgeSX + pts[0].x) / 2, (edgeSY + pts[0].y) / 2, pts[0].x, pts[0].y);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Vein from notch tip toward center (60% chance)
+  if (rng.uniform() < 0.6) {
+    ctx.lineWidth = sw * 0.45;
+    ctx.beginPath();
+    ctx.moveTo(tipX, tipY);
+    const vl = rx * (0.25 + rng.uniform() * 0.3);
+    const vj = (rng.uniform() - 0.5) * 0.15;
+    ctx.lineTo(cx + Math.cos(notchAngle + vj) * vl, cy + Math.sin(notchAngle + vj) * vl * (ry / rx));
+    ctx.stroke();
+  }
+}
+
+// Eyebrow puddle: small curved arc
+function drawEyebrow(ctx, cx, cy, w, rng) {
+  ctx.beginPath();
+  ctx.moveTo(cx - w / 2, cy);
+  ctx.quadraticCurveTo(cx + (rng.uniform() - 0.5) * 2, cy - w * 0.5, cx + w / 2, cy);
+  ctx.stroke();
+}
+
+// Grass fan tuft
+function drawSwampGrassFan(ctx, cx, baseY, size, rng) {
+  const n = 3 + Math.floor(rng.uniform() * 2);
+  const spread = (55 + rng.uniform() * 25) * Math.PI / 180;
+  for (let i = 0; i < n; i++) {
+    const t = n === 1 ? 0.5 : i / (n - 1);
+    const a = -spread / 2 + t * spread + (rng.uniform() - 0.5) * 0.12;
+    ctx.beginPath();
+    ctx.moveTo(cx, baseY);
+    ctx.lineTo(cx + Math.sin(a) * size, baseY - Math.cos(a) * size);
+    ctx.stroke();
+  }
+}
+
+function drawSwamps(canvas, swampHexes, opts = {}) {
+  if (!swampHexes || swampHexes.length === 0) return;
+  const ctx = canvas.getContext('2d');
+  const seed = opts.seed ?? 0;
+  const lineColor = opts.lineColor ?? '#2a2015';
+  const fillColor = opts.fillColor ?? '#e8d5b7';
+
+  const riverPts = [];
+  if (opts.rivers) {
+    for (const r of opts.rivers) {
+      if (!r || !r.points) continue;
+      for (const p of r.points) riverPts.push(p);
+    }
+  }
+  const RIVER_CLEAR = HEX_SIZE * 0.22;
+  const nearRiver = (x, y) => {
+    if (riverPts.length === 0) return false;
+    for (let i = 0; i < riverPts.length; i++) {
+      const p = riverPts[i];
+      const dx = p.x - x, dy = p.y - y;
+      if (dx * dx + dy * dy < RIVER_CLEAR * RIVER_CLEAR) return true;
+    }
+    return false;
+  };
+
+  ctx.strokeStyle = lineColor;
+  ctx.fillStyle = lineColor;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  for (const h of swampHexes) {
+    const center = hexCenter(h.r, h.c, opts);
+    const rng = createRng((((seed + h.r * 1737192737) ^ (h.c * 193496639)) ^ 0x5A7A4B2C) >>> 0);
+
+    // Composition: fir top-center, stump lower-left, lily pads scattered, puddles lower-half
+    // Tall fir (upper area)
+    const firH = HEX_SIZE * (0.42 + rng.uniform() * 0.12);
+    const firX = center.x + (rng.uniform() - 0.5) * HEX_SIZE * 0.15;
+    const firY = center.y - HEX_SIZE * 0.15 + rng.uniform() * HEX_SIZE * 0.1;
+    if (!nearRiver(firX, firY)) {
+      const firRng = createRng((((seed + h.r * 73856093) ^ (h.c * 19349663)) ^ 0x8A2B3C4D) >>> 0);
+      drawSwampFir(ctx, firX, firY, firH, firRng, lineColor, fillColor);
+    }
+
+    // Broken stump (lower area, 60% chance)
+    if (rng.uniform() < 0.6) {
+      const stumpH = HEX_SIZE * (0.18 + rng.uniform() * 0.1);
+      const stumpX = center.x + (rng.uniform() - 0.5) * HEX_SIZE * 0.5;
+      const stumpY = center.y + HEX_SIZE * (0.1 + rng.uniform() * 0.2);
+      if (!nearRiver(stumpX, stumpY)) {
+        const stumpRng = createRng((((seed + h.r * 73856093) ^ (h.c * 19349663)) ^ 0x5D6E7F8A) >>> 0);
+        drawSwampStump(ctx, stumpX, stumpY, stumpH, stumpRng, lineColor, fillColor);
+      }
+    }
+
+    // Lily pads (2-3, scattered)
+    ctx.strokeStyle = lineColor;
+    ctx.lineWidth = Math.max(1.5, HEX_SIZE * 0.045);
+    ctx.fillStyle = fillColor;
+    const nPads = 2 + Math.floor(rng.uniform() * 2);
+    for (let i = 0; i < nPads; i++) {
+      const ang = rng.uniform() * Math.PI * 2;
+      const rad = Math.sqrt(rng.uniform()) * HEX_SIZE * 0.6;
+      const x = center.x + Math.cos(ang) * rad;
+      const y = center.y + Math.sin(ang) * rad;
+      if (nearRiver(x, y)) continue;
+      const rx2 = HEX_SIZE * (0.10 + rng.uniform() * 0.06);
+      const ry2 = HEX_SIZE * (0.05 + rng.uniform() * 0.03);
+      const padRng = createRng((((seed + h.r * 73856093) ^ (h.c * 19349663) ^ (i * 2654435761)) ^ 0x1A2B3C4D) >>> 0);
+      drawSwampLilyPad(ctx, x, y, rx2, ry2, padRng, lineColor, fillColor);
+    }
+
+    // Eyebrow puddles (1-2)
+    ctx.strokeStyle = lineColor;
+    ctx.lineWidth = Math.max(2, HEX_SIZE * 0.055);
+    const nPuddles = 1 + Math.floor(rng.uniform() * 2);
+    for (let i = 0; i < nPuddles; i++) {
+      const ang = rng.uniform() * Math.PI * 2;
+      const rad = Math.sqrt(rng.uniform()) * HEX_SIZE * 0.5;
+      const x = center.x + Math.cos(ang) * rad;
+      const y = center.y + Math.sin(ang) * rad;
+      if (nearRiver(x, y)) continue;
+      const ew = HEX_SIZE * (0.15 + rng.uniform() * 0.12);
+      drawEyebrow(ctx, x, y, ew, rng);
+    }
+
+    // Grass tuft (lower edge, 40% chance)
+    if (rng.uniform() < 0.4) {
+      ctx.lineWidth = Math.max(1.5, HEX_SIZE * 0.045);
+      const gx = center.x + (rng.uniform() - 0.5) * HEX_SIZE * 0.4;
+      const gy = center.y + HEX_SIZE * (0.2 + rng.uniform() * 0.15);
+      if (!nearRiver(gx, gy)) {
+        const gs = HEX_SIZE * (0.10 + rng.uniform() * 0.06);
+        drawSwampGrassFan(ctx, gx, gy, gs, rng);
+      }
+    }
+  }
+}
+
+module.exports = { drawPonds, drawMountains, drawHills, drawGrass, drawForests, drawSwamps };
