@@ -49,10 +49,13 @@ function renderMap(opts = {}) {
   const drawGrid = opts.drawGrid ?? true;
   const drawOceanFlag = opts.drawOcean ?? true;
   const drawRiverFlag = opts.drawRiver ?? true;
+  const placeCities = opts.placeCities ?? true;
   const riverParams = opts.riverParams ?? {};
   const gridParams = opts.gridParams ?? {};
-  const riverPathOpts = opts.riverPathOpts ?? {};
-  const oceanParams = opts.oceanParams ?? {};
+  const riverPathOpts = { ...(opts.riverPathOpts ?? {}) };
+  if (opts.riverCount != null) riverPathOpts.riverCount = opts.riverCount;
+  const oceanParams = { ...(opts.oceanParams ?? {}) };
+  if (opts.oceanCap != null) oceanParams.cap = opts.oceanCap;
   const sidesOverride = opts.sides;
   const oceanGridOpacity = opts.oceanGridOpacity ?? 0.25;
 
@@ -300,7 +303,12 @@ function renderMap(opts = {}) {
     Efinal.set(k, E.get(k));
     Mfinal.set(k, M.get(k));
   }
-  const biomesOut = classifyBiomes(biomeRng, landSetFinal, Efinal, Mfinal, isCoastAdjAll, isRiverAdjAll);
+  const biomesOut = classifyBiomes(biomeRng, landSetFinal, Efinal, Mfinal, isCoastAdjAll, isRiverAdjAll, {
+    placeCities,
+    cityCount: opts.cityCount,
+    elevationBias: opts.elevationBias ?? 0,
+    humidityBias: opts.humidityBias ?? 0,
+  });
 
   const pondRng = createRng(((seed * 0x6B5F2391) >>> 0) ^ 0x504E4242);
   const ponds = placePonds(pondRng, landSetFinal, lakeWater, biomesOut.tags, riverHexes, isCoastAdjAll, Efinal, Mfinal);

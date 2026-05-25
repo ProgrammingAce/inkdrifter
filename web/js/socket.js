@@ -7,6 +7,7 @@ export const EVENTS = {
   NEW_GAME: 'new_game',
   START_GAME: 'start_game',
   REGENERATE_MAP: 'regenerate_map',
+  UPDATE_MAP_OPTIONS: 'update_map_options',
   LOBBY_STATE: 'lobby_state',
   PLAYER_JOINED: 'player_joined',
   PLAYER_LEFT: 'player_left',

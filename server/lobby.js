@@ -11,12 +11,13 @@ const {
 const { MAX_PLAYERS_PER_LOBBY } = require('./protocol.js');
 
 class Lobby {
-  constructor({ code, seed, rows, cols, hostToken, hostName, islands = false }) {
+  constructor({ code, seed, rows, cols, hostToken, hostName, islands = false, mapOptions = {} }) {
     this.code = code;
     this.seed = seed;
     this.rows = rows;
     this.cols = cols;
     this.islands = !!islands;
+    this.mapOptions = { ...mapOptions, islands: !!islands };
     const { W, H } = gridCanvasSize(rows, cols, DEFAULT_GRID_ORIGIN_X, DEFAULT_GRID_ORIGIN_Y);
     this.canvasWidth = W;
     this.canvasHeight = H;
@@ -287,6 +288,7 @@ class Lobby {
       fog: this.fog,
       pendingRequests: this._pendingRequestsWire({ sort: true }),
       biomeTags: this.biomeTags,
+      mapOptions: this.mapOptions,
     };
     if (role === 'host') return { ...base, role: 'host' };
     return { ...base, role: 'player', playerId };

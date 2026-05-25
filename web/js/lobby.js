@@ -2,6 +2,18 @@ import { EVENTS, ERROR_CODES, createSocket } from './socket.js';
 import { loadBaseMap, startRenderLoop, BIOME_COLORS } from './render.js';
 import { initInput, scrollToMarker, initZoom } from './input.js';
 import { hexCenter } from './hex.js';
+import { mountMapSettingsModal } from './mapSettingsModal.js?v=3';
+import { encodePackedSeed } from './seedCodec.js';
+
+function packedSeedFor(s) {
+  if (!s) return '';
+  return encodePackedSeed({
+    seed: s.seed,
+    rows: s.rows,
+    cols: s.cols,
+    options: s.mapOptions || {},
+  });
+}
 
 const code = window.location.pathname.split('/').pop();
 const hostToken = localStorage.getItem(`hostToken_${code}`);
@@ -61,7 +73,7 @@ function applyState(data) {
   state = data;
   state._revealedSet = new Set(data.revealed.map(([r, c]) => `${r},${c}`));
   if (lobbyCodeEl) lobbyCodeEl.textContent = data.code;
-  if (seedEl) seedEl.textContent = data.seed;
+  if (seedEl) seedEl.textContent = packedSeedFor(data);
   updatePlayerList();
   updatePendingList();
   updateFogControls();
@@ -437,7 +449,7 @@ if (isHost && fogControlsEl) {
     navigator.clipboard.writeText(code).then(() => showToast('Code copied!'));
   });
   document.getElementById('copy-seed-btn')?.addEventListener('click', () => {
-    navigator.clipboard.writeText(String(state?.seed ?? '')).then(() => showToast('Seed copied!'));
+    navigator.clipboard.writeText(packedSeedFor(state)).then(() => showToast('Seed copied!'));
   });
   fogHostEl?.addEventListener('change', () => {
     socket.emit(EVENTS.FOG_TOGGLE, { target: 'host', enabled: fogHostEl.checked });
@@ -455,6 +467,35 @@ if (isHost && fogControlsEl) {
   document.getElementById('regenerate-btn')?.addEventListener('click', () => {
     socket.emit(EVENTS.REGENERATE_MAP);
   });
+
+  if (isHost) {
+    const mapSettings = mountMapSettingsModal({
+      locked: ['rows', 'cols', 'seed', 'islands'],
+      onDone: (opts) => {
+        socket.emit(EVENTS.UPDATE_MAP_OPTIONS, opts, (resp) => {
+          if (resp && !resp.ok) showToast('Could not save settings: ' + resp.error, true);
+        });
+      },
+    });
+    // Populate the modal once from server state; afterward the form's own
+    // values are authoritative (so a fast re-open doesn't get stomped by a
+    // pre-broadcast stale state).
+    let modalInitialized = false;
+    const initFromState = () => {
+      if (!state) return;
+      mapSettings.setOptions({
+        ...(state.mapOptions || {}),
+        rows: state.rows,
+        cols: state.cols,
+        seed: packedSeedFor(state),
+      });
+      modalInitialized = true;
+    };
+    document.getElementById('map-settings-btn')?.addEventListener('click', () => {
+      if (!modalInitialized) initFromState();
+      mapSettings.open();
+    });
+  }
   document.getElementById('start-game-btn')?.addEventListener('click', () => {
     socket.emit(EVENTS.START_GAME);
   });

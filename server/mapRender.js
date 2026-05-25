@@ -51,7 +51,7 @@ class RenderQueue {
   render(seed, rows, cols, opts = {}) {
     return new Promise((resolve, reject) => {
       const jobId = ++this._jobId;
-      const msg = { jobId, seed, rows, cols, islands: !!opts.islands };
+      const msg = { jobId, seed, rows, cols, options: opts };
       this._queue.push({ jobId, msg, resolve, reject });
       this._processNext();
     });

@@ -79,7 +79,7 @@ function emitError(socket, code, message) {
 function enqueueRender(code, { onReady, errorLabel = 'Render' } = {}) {
   const lobby = manager.getLobby(code);
   if (!lobby) return;
-  renderQueue.render(lobby.seed, lobby.rows, lobby.cols, { islands: lobby.islands }).then(({ pngBuffer, biomeTags }) => {
+  renderQueue.render(lobby.seed, lobby.rows, lobby.cols, lobby.mapOptions).then(({ pngBuffer, biomeTags }) => {
     const l = manager.getLobby(code);
     if (!l) return;
     l.setReady(pngBuffer, biomeTags);
@@ -108,6 +108,48 @@ function parseGridParams(req) {
   if (rows == null || rows < MIN_GRID || rows > MAX_GRID) return { error: 'bad_rows' };
   if (cols == null || cols < MIN_GRID || cols > MAX_GRID) return { error: 'bad_cols' };
   return { rows, cols };
+}
+
+function parseMapOptions(body) {
+  const opts = {};
+  if (body.drawOcean === false) opts.drawOcean = false;
+  if (body.drawRiver === false) opts.drawRiver = false;
+  if (body.drawGrid === false) opts.drawGrid = false;
+  if (body.placeCities === false) opts.placeCities = false;
+  if (body.oceanCap != null && body.oceanCap !== '') {
+    const cap = Number(body.oceanCap);
+    if (!Number.isFinite(cap) || cap < 0.05 || cap > 0.80) return { error: 'bad_ocean_cap' };
+    opts.oceanCap = cap;
+  }
+  if (body.riverCount != null && body.riverCount !== '') {
+    const rc = toInt(body.riverCount);
+    if (rc == null || rc < 0 || rc > 20) return { error: 'bad_river_count' };
+    opts.riverCount = rc;
+  }
+  if (body.cityCount != null && body.cityCount !== '') {
+    const cc = toInt(body.cityCount);
+    if (cc == null || cc < 0 || cc > 20) return { error: 'bad_city_count' };
+    opts.cityCount = cc;
+    if (cc === 0) opts.placeCities = false;
+  }
+  if (body.coastSides != null) {
+    if (!Array.isArray(body.coastSides)) return { error: 'bad_coast_sides' };
+    const valid = ['N', 'S', 'E', 'W'];
+    const sides = body.coastSides.filter(s => valid.includes(s));
+    if (sides.length !== body.coastSides.length) return { error: 'bad_coast_sides' };
+    opts.sides = sides;
+  }
+  if (body.elevationBias != null && body.elevationBias !== '') {
+    const eb = Number(body.elevationBias);
+    if (!Number.isFinite(eb) || eb < -0.4 || eb > 0.4) return { error: 'bad_elevation' };
+    opts.elevationBias = eb;
+  }
+  if (body.humidityBias != null && body.humidityBias !== '') {
+    const hb = Number(body.humidityBias);
+    if (!Number.isFinite(hb) || hb < -0.4 || hb > 0.4) return { error: 'bad_humidity' };
+    opts.humidityBias = hb;
+  }
+  return { options: opts };
 }
 
 function parseSeed(raw, { required = false } = {}) {
@@ -144,10 +186,12 @@ async function createLobbyAndRender(req, res, { onReady, errorLabel, requireSeed
   const s = parseSeed(req.body.seed, { required: requireSeed });
   if (s.error) return res.status(400).json({ error: s.error });
   const islands = !!req.body.islands;
+  const m = parseMapOptions(req.body);
+  if (m.error) return res.status(400).json({ error: m.error });
 
   let lobby;
   try {
-    lobby = await manager.createLobby({ rows: grid.rows, cols: grid.cols, seed: s.seed, hostName: name, islands });
+    lobby = await manager.createLobby({ rows: grid.rows, cols: grid.cols, seed: s.seed, hostName: name, islands, mapOptions: m.options });
   } catch (e) {
     if (e.code === 503) return res.status(503).json({ error: 'code_exhausted' });
     throw e;
@@ -230,6 +274,7 @@ app.get('/api/lobbies/:code', (req, res) => {
     canvasHeight: lobby.canvasHeight,
     status: lobby.status,
     hostName: lobby.hostName,
+    mapOptions: lobby.mapOptions,
   });
 });
 
@@ -391,6 +436,21 @@ io.on('connection', (socket) => {
     if (!lobby) return;
     if (lobby.status !== 'preview') return;
     lobby.startGame();
+    broadcastLobbyState(socket.data.lobbyCode);
+  });
+
+  socket.on(EVENTS.UPDATE_MAP_OPTIONS, (payload, ack) => {
+    if (!socket.data.authenticated || !socket.data.isHost) return;
+    const lobby = manager.getLobby(socket.data.lobbyCode);
+    if (!lobby) return;
+    if (lobby.status !== 'preview') return;
+    const m = parseMapOptions(payload || {});
+    if (m.error) {
+      if (typeof ack === 'function') ack({ ok: false, error: m.error });
+      return;
+    }
+    lobby.mapOptions = { ...m.options, islands: lobby.islands };
+    if (typeof ack === 'function') ack({ ok: true });
     broadcastLobbyState(socket.data.lobbyCode);
   });
 

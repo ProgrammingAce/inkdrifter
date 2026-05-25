@@ -22,21 +22,8 @@
           <label for="host-name">Your name</label>
           <input type="text" id="host-name" placeholder="Enter your name" maxlength="24" required>
         </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label for="create-rows">Rows</label>
-            <input type="number" id="create-rows" value="12" min="6" max="50">
-          </div>
-          <div class="form-group">
-            <label for="create-cols">Columns</label>
-            <input type="number" id="create-cols" value="16" min="6" max="50">
-          </div>
-        </div>
-        <div class="form-group">
-          <label for="create-seed">Seed <span class="hint">(optional — leave blank for random)</span></label>
-          <input type="number" id="create-seed" placeholder="e.g. 42" min="0" max="4294967295">
-        </div>
         <button type="submit" class="btn">Generate &amp; Host</button>
+        <button type="button" id="map-settings-btn" class="btn btn-secondary btn-spacer">&#x2699;&#xfe0f; Map Settings</button>
         <div class="import-row">
           <button type="button" id="import-btn" class="btn btn-import" disabled>&#x1f4c1; Import Game</button>
           <div class="import-tooltip">Enter your name before importing a game</div>

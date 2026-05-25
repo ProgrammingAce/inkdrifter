@@ -8,6 +8,7 @@ const EVENTS = {
   NEW_GAME: 'new_game',
   START_GAME: 'start_game',
   REGENERATE_MAP: 'regenerate_map',
+  UPDATE_MAP_OPTIONS: 'update_map_options',
 
   // Server → Client
   LOBBY_STATE: 'lobby_state',

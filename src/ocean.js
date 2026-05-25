@@ -18,6 +18,10 @@ function shuffleInPlace(arr, rng) {
 }
 
 function pickSides(rng, override) {
+  if (Array.isArray(override)) {
+    const valid = override.filter(s => SIDES.includes(s));
+    return [...new Set(valid)];
+  }
   const counts = [0, 1, 2, 3, 4];
   const n = (override !== undefined && override !== null)
     ? Math.max(0, Math.min(4, override))

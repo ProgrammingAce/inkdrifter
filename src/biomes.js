@@ -80,17 +80,24 @@ function computeScalarFields(biomeRng, landSet, coastWater, riverHexes, rows, co
   return { E, M, isCoastAdj, isRiverAdj };
 }
 
-function classifyBiomes(biomeRng, landSet, E, M, isCoastAdj, isRiverAdj) {
+function classifyBiomes(biomeRng, landSet, E, M, isCoastAdj, isRiverAdj, opts = {}) {
+  const placeCities = opts.placeCities ?? true;
+  const eBias = opts.elevationBias ?? 0;
+  const mBias = opts.humidityBias ?? 0;
+  const tMountain = 0.85 - eBias;
+  const tHills = 0.65 - eBias;
+  const tSwamp = 0.80 - mBias;
+  const tForest = 0.55 - mBias;
   const baseTags = new Map();
   for (const key of landSet) {
     const [r, c] = key.split(',').map(Number);
     const e = E.get(key);
     const m = M.get(key);
     let tag;
-    if (e >= 0.85) tag = 'mountains';
-    else if (e >= 0.65) tag = 'hills';
-    else if (m >= 0.80 && (isRiverAdj(r, c) || isCoastAdj(r, c))) tag = 'swamp';
-    else if (m >= 0.55) tag = 'forest';
+    if (e >= tMountain) tag = 'mountains';
+    else if (e >= tHills) tag = 'hills';
+    else if (m >= tSwamp && (isRiverAdj(r, c) || isCoastAdj(r, c))) tag = 'swamp';
+    else if (m >= tForest) tag = 'forest';
     else tag = 'plains';
     baseTags.set(key, tag);
   }
@@ -103,6 +110,10 @@ function classifyBiomes(biomeRng, landSet, E, M, isCoastAdj, isRiverAdj) {
       if (t === 'mountains' || t === 'hills') { touchesRange = true; break; }
     }
     if (!touchesRange) baseTags.set(key, 'hills');
+  }
+
+  if (!placeCities) {
+    return { tags: new Map(baseTags), baseTags, cities: [] };
   }
 
   const eligible = [];
@@ -118,7 +129,10 @@ function classifyBiomes(biomeRng, landSet, E, M, isCoastAdj, isRiverAdj) {
     eligible.push({ key, r, c, score });
   }
   eligible.sort((a, b) => b.score - a.score);
-  const Ntarget = Math.max(1, Math.min(5, Math.round(landSet.size / 18)));
+  const autoTarget = Math.max(1, Math.min(5, Math.round(landSet.size / 18)));
+  const Ntarget = opts.cityCount != null
+    ? Math.max(0, Math.min(eligible.length, opts.cityCount))
+    : autoTarget;
   const placed = [];
   for (const cand of eligible) {
     let ok = true;

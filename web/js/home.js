@@ -1,4 +1,5 @@
 import { MAX_PLAYERS_PER_LOBBY } from './socket.js';
+import { mountMapSettingsModal } from './mapSettingsModal.js?v=3';
 
 const createForm = document.getElementById('create-form');
 const joinForm = document.getElementById('join-form');
@@ -9,17 +10,14 @@ const importFileInput = document.getElementById('import-file-input');
 const hostNameInput = document.getElementById('host-name');
 const joinBtn = document.getElementById('join-btn');
 const playerNameInput = document.getElementById('player-name');
+const mapSettingsBtn = document.getElementById('map-settings-btn');
 
 joinBtn.addEventListener('click', (e) => {
   if (joinBtn.disabled) e.preventDefault();
 });
 
-// Hidden URL toggle: ?islands=1 makes new lobbies generate islands-only maps.
-// No UI; query param sticks for as long as the home page is open.
-const ISLANDS_MODE = (() => {
-  const v = new URLSearchParams(window.location.search).get('islands');
-  return v != null && v !== '' && v !== '0' && v.toLowerCase() !== 'false';
-})();
+const mapSettings = mountMapSettingsModal();
+mapSettingsBtn.addEventListener('click', mapSettings.open);
 
 importBtn.addEventListener('click', () => {
   importFileInput.value = '';
@@ -82,18 +80,13 @@ playerNameInput.addEventListener('input', () => {
 
 createForm.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const hostName = document.getElementById('host-name').value.trim();
-  const rows = parseInt(document.getElementById('create-rows').value, 10);
-  const cols = parseInt(document.getElementById('create-cols').value, 10);
-  const seedRaw = document.getElementById('create-seed').value.trim();
+  const hostName = hostNameInput.value.trim();
 
   createStatus.textContent = 'Creating lobby…';
   createStatus.className = 'status-msg';
 
   try {
-    const body = { hostName, rows, cols };
-    if (seedRaw) body.seed = parseInt(seedRaw, 10);
-    if (ISLANDS_MODE) body.islands = true;
+    const body = { hostName, ...mapSettings.getOptions() };
     const res = await fetch('/api/lobbies', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

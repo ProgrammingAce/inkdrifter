@@ -218,6 +218,157 @@ input[type="text"]:focus, input[type="number"]:focus { border-color: var(--text-
   letter-spacing: 0.03em;
   transition: background 0.15s;
 }
+
+.btn-spacer { margin-top: 10px; }
+
+.hint { color: var(--text-light); font-size: 0.8rem; opacity: 0.75; font-style: italic; }
+
+.form-check label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  color: var(--text-light);
+  font-size: 0.95rem;
+}
+.form-check input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.form-check .hint { margin-top: 6px; margin-left: 24px; }
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10,5,2,0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 20px;
+}
+.modal-overlay[hidden] { display: none; }
+
+.modal {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  width: 100%;
+  max-width: 440px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+  display: flex;
+  flex-direction: column;
+}
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--border);
+}
+.modal-header h2 {
+  font-family: var(--font-head);
+  color: var(--text-gold);
+  font-size: 1.25rem;
+  margin: 0;
+}
+.modal-close {
+  background: transparent;
+  border: none;
+  color: var(--text-light);
+  font-size: 1.6rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+  transition: color 0.15s;
+}
+.modal-close:hover { color: var(--text-gold); }
+.modal-body { padding: 22px 24px 4px; }
+.modal-sep { border: none; border-top: 1px solid var(--border); margin: 4px 0 18px; }
+.label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 5px;
+}
+.label-row > label { margin-bottom: 0; }
+.auto-toggle {
+  display: flex !important;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.8rem;
+  color: var(--text-light);
+  cursor: pointer;
+  margin-bottom: 0;
+}
+.auto-toggle input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.sides-grid input[type="checkbox"]:disabled + * ,
+.sides-grid label:has(input:disabled) {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sides-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 14px;
+  margin-top: 4px;
+}
+.sides-grid label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.9rem;
+  color: var(--text-light);
+  cursor: pointer;
+}
+.sides-grid input[type="checkbox"] {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.range-ends {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: var(--text-light);
+  opacity: 0.7;
+  margin-top: 2px;
+  letter-spacing: 0.05em;
+}
+
+.beta-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  background: var(--accent);
+  color: var(--parchment);
+  border-radius: 3px;
+  font-size: 0.65rem;
+  font-family: var(--font-head);
+  letter-spacing: 0.08em;
+  vertical-align: middle;
+}
+.modal-footer {
+  padding: 14px 24px 20px;
+  display: flex;
+  justify-content: flex-end;
+}
+.modal-footer .btn { width: auto; min-width: 120px; margin-top: 0; }
+.modal-footer { gap: 10px; }
+.disabled-label { opacity: 0.55; }
 .btn-secondary:hover { background: rgba(107,58,31,0.2); }
 
 /* Toast */
@@ -332,16 +483,33 @@ input[type="text"]:focus, input[type="number"]:focus { border-color: var(--text-
   letter-spacing: 0.2em;
 }
 
+.seed-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.seed-label {
+  font-size: 0.8rem;
+  color: #9a7a55;
+}
+
 .seed-row {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 
 .seed-value {
   font-family: 'Courier New', monospace;
   font-size: 0.95rem;
   color: var(--text-light);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .btn-icon {

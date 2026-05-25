@@ -44,10 +44,12 @@
         <span id="lobby-code" class="code-value">—</span>
         <button id="copy-code-btn" class="btn-icon" title="Copy code">Copy</button>
       </div>
-      <div class="seed-row">
-        <span style="font-size:0.8rem;color:#9a7a55;">Seed:</span>
-        <span id="lobby-seed" class="seed-value">—</span>
-        <button id="copy-seed-btn" class="btn-icon" title="Copy seed">Copy</button>
+      <div class="seed-block">
+        <span class="seed-label">Seed</span>
+        <div class="seed-row">
+          <span id="lobby-seed" class="seed-value">—</span>
+          <button id="copy-seed-btn" class="btn-icon" title="Copy seed">Copy</button>
+        </div>
       </div>
     </div>
 
@@ -91,6 +93,9 @@
       <p style="font-size:0.85rem;color:var(--text-light);margin-bottom:12px;">
         This is your map preview. Generate a new map or start the game.
       </p>
+      <button id="map-settings-btn" class="btn-secondary" style="width:100%;margin-bottom:8px;">
+        &#x2699;&#xfe0f; Map Settings
+      </button>
       <button id="regenerate-btn" class="btn-secondary" style="width:100%;margin-bottom:8px;">
         &#x1f3b2; Generate New Map
       </button>
@@ -115,6 +120,6 @@
 <div id="toast" class="toast"></div>
 
 <script src="/socket.io/socket.io.js"></script>
-<script type="module" src="/js/lobby.js?v=10"></script>
+<script type="module" src="/js/lobby.js?v=14"></script>
 </body>
 </html>
