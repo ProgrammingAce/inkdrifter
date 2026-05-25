@@ -260,6 +260,7 @@ export class LobbyDO {
       seed: this.lobby.seed,
       rows: this.lobby.rows,
       cols: this.lobby.cols,
+      islands: this.lobby.islands,
       canvasWidth: this.lobby.canvasWidth,
       canvasHeight: this.lobby.canvasHeight,
       status: this.lobby.status,
@@ -461,6 +462,12 @@ export class LobbyDO {
         break;
       case EVENTS.POI_DELETE:
         this.handlePoiDelete(ws, data);
+        break;
+      case 'ping':
+        if (this.lobby) {
+          this.lobby.touchActivity();
+          this.sendTo(ws, { type: 'pong' });
+        }
         break;
     }
   }

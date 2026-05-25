@@ -165,6 +165,45 @@ input[type="text"]:focus, input[type="number"]:focus { border-color: var(--text-
   opacity: 1;
 }
 
+.create-row {
+  position: relative;
+  width: 100%;
+}
+
+.create-tooltip {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(30,15,5,0.97);
+  border: 1px solid var(--text-gold);
+  color: var(--text-gold);
+  padding: 10px 16px;
+  border-radius: 4px;
+  font-family: var(--font-body);
+  font-size: 0.88rem;
+  white-space: normal;
+  max-width: 300px;
+  text-align: center;
+  z-index: 10;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.create-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: var(--text-gold);
+}
+
+.create-row:has(.btn:disabled):hover .create-tooltip {
+  opacity: 1;
+}
+
 .join-row {
   position: relative;
   width: 100%;
@@ -855,3 +894,42 @@ textarea[data-pe="description"]:focus { border-color: var(--text-gold); }
   filter: drop-shadow(0 4px 6px rgba(0,0,0,0.5));
 }
 .poi-drag-ghost.over-hex { opacity: 1; transform: translate(-50%, -90%) scale(1.05); }
+
+/* ── Disconnect modal ─────────────────────────────────────────────── */
+.disconnect-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+.disconnect-card {
+  background: var(--card-bg, #faf3e6);
+  border: 2px solid var(--ink, #5b3a1f);
+  border-radius: 12px;
+  padding: 32px;
+  max-width: 420px;
+  width: 90%;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+.disconnect-card h2 {
+  margin: 0 0 8px;
+  font-size: 1.4rem;
+  color: var(--ink, #5b3a1f);
+}
+.disconnect-card p {
+  margin: 0 0 24px;
+  color: var(--text-muted, #7a6552);
+  line-height: 1.5;
+}
+.disconnect-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.disconnect-actions .btn,
+.disconnect-actions .btn-outline {
+  width: 100%;
+}

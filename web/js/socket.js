@@ -64,6 +64,10 @@ export function createSocket() {
   let reconnectDelay = 1000;
   let reconnectTimer = null;
   let connectResolve = null;
+  let failedAttempts = 0;
+  const MAX_RECONNECT_ATTEMPTS = 4;
+  let pingTimer = null;
+  const PING_INTERVAL = 20 * 60 * 1000; // 20 min
 
   // ── WebSocket transport ──────────────────────────────────────────────
   let ws = null;
@@ -96,6 +100,8 @@ export function createSocket() {
       wsTimeout = null;
       transport = 'ws';
       reconnectDelay = 1000;
+      failedAttempts = 0;
+      startPing();
       if (authRole && authToken) {
         ws.send(JSON.stringify({ type: EVENTS.AUTH, data: { code, role: authRole, token: authToken } }));
       }
@@ -106,6 +112,7 @@ export function createSocket() {
     ws.addEventListener('close', (e) => {
       clearTimeout(wsTimeout);
       wsTimeout = null;
+      stopPing();
       transport = null;
       for (const fn of (listeners.get('disconnect') || [])) fn(e);
       scheduleReconnect();
@@ -114,6 +121,7 @@ export function createSocket() {
     ws.addEventListener('error', (e) => {
       if (!wsError) {
         wsError = true;
+        stopPing();
         console.warn('WebSocket error, falling back to SSE');
         try { ws.close(); } catch {}
         ws = null;
@@ -136,6 +144,7 @@ export function createSocket() {
   function closeWs() {
     clearTimeout(wsTimeout);
     wsTimeout = null;
+    stopPing();
     if (ws) { try { ws.close(); } catch {} ws = null; }
     transport = null;
   }
@@ -171,11 +180,13 @@ export function createSocket() {
 
     sse.addEventListener('open', () => {
       reconnectDelay = 1000;
+      failedAttempts = 0;
       for (const fn of (listeners.get('connect') || [])) fn();
       if (connectResolve) { connectResolve(); connectResolve = null; }
     });
 
     sse.addEventListener('error', (e) => {
+      stopPing();
       for (const fn of (listeners.get('disconnect') || [])) fn(e);
       if (sse) { sse.close(); sse = null; }
       transport = null;
@@ -194,6 +205,19 @@ export function createSocket() {
   function closeSse() {
     if (sse) { try { sse.close(); } catch {} sse = null; }
     transport = null;
+  }
+
+  function startPing() {
+    stopPing();
+    pingTimer = setInterval(() => {
+      if (transport === 'ws' && ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'ping' }));
+      }
+    }, PING_INTERVAL);
+  }
+
+  function stopPing() {
+    if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
   }
 
   async function emitSse(type, data, ackFn) {
@@ -221,7 +245,12 @@ export function createSocket() {
     if (reconnectTimer) return;
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
-      tryConnect();
+      failedAttempts++;
+      if (failedAttempts >= MAX_RECONNECT_ATTEMPTS) {
+        for (const fn of (listeners.get('reconnect_failed') || [])) fn(failedAttempts);
+      } else {
+        tryConnect();
+      }
       reconnectDelay = Math.min(reconnectDelay * 2, 5000);
     }, reconnectDelay);
   }
@@ -290,8 +319,15 @@ export function createSocket() {
 
     disconnect() {
       if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+      stopPing();
       closeWs();
       closeSse();
+      failedAttempts = 0;
+    },
+
+    resetReconnect() {
+      failedAttempts = 0;
+      reconnectDelay = 1000;
     },
 
     getTransport() {

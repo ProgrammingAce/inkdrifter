@@ -721,6 +721,78 @@ if (biomeToggleEl) {
 }
 populateLegendSwatches();
 
+// ── Disconnect modal ──────────────────────────────────────────────────────────
+function buildExportState() {
+  if (!state) return null;
+  return {
+    code: state.code,
+    seed: state.seed,
+    gridRows: state.rows,
+    gridCols: state.cols,
+    canvasWidth: state.canvasWidth,
+    canvasHeight: state.canvasHeight,
+    status: state.status,
+    fog: { ...state.fog },
+    marker: state.marker ? { ...state.marker } : null,
+    revealedTiles: state.revealed ? [...state.revealed] : [],
+    pendingRequests: state.pendingRequests ? state.pendingRequests.map(r => ({ ...r })) : [],
+    players: JSON.parse(JSON.stringify(state.players)),
+    hostName: state.hostName,
+    hostConnected: state.hostConnected,
+    biomeTags: state.biomeTags ? { ...state.biomeTags } : {},
+    islands: state.islands,
+    mapOptions: state.mapOptions ? { ...state.mapOptions } : {},
+    pois: Array.isArray(state.pois) ? state.pois.map(p => ({ ...p })) : [],
+  };
+}
+
+function showDisconnectModal() {
+  if (document.getElementById('disconnect-modal')) return;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'disconnect-modal';
+  overlay.innerHTML = `
+    <div class="disconnect-overlay">
+      <div class="disconnect-card">
+        <h2>Connection Lost</h2>
+        <p>The game server is unreachable. Your local progress is preserved below.</p>
+        <div class="disconnect-actions">
+          <button id="export-local-btn" class="btn">Export Game State</button>
+          <button id="reload-reconnect-btn" class="btn">Reload &amp; Reconnect</button>
+          <button id="dismiss-disconnect-btn" class="btn-outline">Keep Playing Offline</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  document.getElementById('export-local-btn').addEventListener('click', () => {
+    const data = buildExportState();
+    if (!data) {
+      showToast('No game state available.', true);
+      return;
+    }
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `inkdrifter-game-state-${code}-${Date.now()}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showToast('Game state exported.');
+  });
+
+  document.getElementById('reload-reconnect-btn').addEventListener('click', () => {
+    location.reload();
+  });
+
+  document.getElementById('dismiss-disconnect-btn').addEventListener('click', () => {
+    document.getElementById('disconnect-modal').remove();
+  });
+}
+
 // ── Connect ───────────────────────────────────────────────────────────────────
 if (!hostToken && !playerToken) {
   showToast('No credentials found. Returning to home.', true);
@@ -733,5 +805,10 @@ if (!hostToken && !playerToken) {
   socket.on('connect_error', (err) => {
     console.error('Socket connection error:', err);
     showToast('Connection error. Please refresh.', true);
+  });
+
+  socket.on('reconnect_failed', (attempts) => {
+    console.warn('Reconnect failed after', attempts, 'attempts');
+    showDisconnectModal();
   });
 }

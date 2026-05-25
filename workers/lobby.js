@@ -59,6 +59,10 @@ export class Lobby {
     this._markerMoveWindowStart = Date.now();
   }
 
+  touchActivity() {
+    this.lastActivityAt = Date.now();
+  }
+
   addPlayer(playerName) {
     if (Object.keys(this.players).length >= MAX_PLAYERS_PER_LOBBY - 1) return null;
     this.lastActivityAt = Date.now();
@@ -456,6 +460,7 @@ export class Lobby {
       fog: this.fog,
       pendingRequests: this._pendingRequestsWire({ sort: true }),
       biomeTags: this.biomeTags,
+      islands: this.islands,
       mapOptions: this.mapOptions,
       pois: this.getVisiblePois(role),
     };

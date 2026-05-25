@@ -19,7 +19,8 @@ const MODAL_HTML = `
           <label data-ms-for="cols">Columns</label>
           <input type="number" data-ms="cols" value="12" min="6" max="50">
         </div>
-      </div>
+       </div>
+       <p class="hint" data-ms="gridHint">Grid dimensions can only be changed from the main menu.</p>
       <div class="form-group">
         <label data-ms-for="seed">Seed <span class="hint">(optional — paste a shared seed to copy a map)</span></label>
         <input type="text" data-ms="seed" placeholder="random" autocomplete="off" spellcheck="false" maxlength="17">
@@ -121,6 +122,7 @@ export function mountMapSettingsModal({ locked = [], onDone } = {}) {
     drawGrid: $('drawGrid'),
     islands: $('islands'),
     coastAuto: $('coastAuto'),
+    gridHint: $('gridHint'),
   };
 
   // Lock requested fields.
@@ -131,6 +133,7 @@ export function mountMapSettingsModal({ locked = [], onDone } = {}) {
     if (lbl) lbl.classList.add('disabled-label');
   }
 
+ 
   // Live readouts for sliders.
   const sliderReadout = (input, name) => {
     const out = root.querySelector(`[data-ms-readout="${name}"]`);

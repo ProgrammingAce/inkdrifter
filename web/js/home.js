@@ -2,6 +2,7 @@ import { MAX_PLAYERS_PER_LOBBY } from './socket.js';
 import { mountMapSettingsModal } from './mapSettingsModal.js?v=3';
 
 const createForm = document.getElementById('create-form');
+const createBtn = createForm.querySelector('[type="submit"]');
 const joinForm = document.getElementById('join-form');
 const createStatus = document.getElementById('create-status');
 const joinStatus = document.getElementById('join-status');
@@ -72,7 +73,9 @@ importFileInput.addEventListener('change', async (e) => {
 });
 
 hostNameInput.addEventListener('input', () => {
-  importBtn.disabled = !hostNameInput.value.trim();
+  const hasName = hostNameInput.value.trim();
+  importBtn.disabled = !hasName;
+  createBtn.disabled = !hasName;
 });
 
 playerNameInput.addEventListener('input', () => {
@@ -80,6 +83,10 @@ playerNameInput.addEventListener('input', () => {
 });
 
 createForm.addEventListener('submit', async (e) => {
+  if (createBtn.disabled) {
+    e.preventDefault();
+    return;
+  }
   e.preventDefault();
   const hostName = hostNameInput.value.trim();
 

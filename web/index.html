@@ -22,7 +22,10 @@
           <label for="host-name">Your name</label>
           <input type="text" id="host-name" placeholder="Enter your name" maxlength="24" required>
         </div>
-        <button type="submit" class="btn">Generate &amp; Host</button>
+        <div class="create-row">
+          <button type="submit" class="btn" disabled>Generate &amp; Host</button>
+          <div class="create-tooltip">Enter your name before hosting a lobby</div>
+        </div>
         <button type="button" id="map-settings-btn" class="btn btn-secondary btn-spacer">&#x2699;&#xfe0f; Map Settings</button>
         <div class="import-row">
           <button type="button" id="import-btn" class="btn btn-import" disabled>&#x1f4c1; Import Game</button>
