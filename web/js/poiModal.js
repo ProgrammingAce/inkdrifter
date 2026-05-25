@@ -274,7 +274,7 @@ export function initPoiModals({ socket, getState, getIsHost, showToast }) {
       wrap.className = 'poi-tray-flag';
       wrap.dataset.color = color;
       wrap.title = `Drag onto map to place a ${color} flag`;
-      wrap.appendChild(buildFlagSvg(color, 1, { outline: '#ffffff' }));
+      wrap.appendChild(buildFlagSvg(color, 1));
       wrap.addEventListener('pointerdown', (e) => {
         e.preventDefault();
         startDragFromTray(color, e);
@@ -294,7 +294,7 @@ export function initPoiModals({ socket, getState, getIsHost, showToast }) {
 
     const ghost = document.createElement('div');
     ghost.className = 'poi-drag-ghost';
-    ghost.appendChild(buildFlagSvg(color, 1.4, { outline: '#ffffff' }));
+    ghost.appendChild(buildFlagSvg(color, 1.4));
     document.body.appendChild(ghost);
 
     function place(e) {
