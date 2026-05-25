@@ -1,4 +1,5 @@
 import { hexCenter, hexVertices, HEX_SIZE, neighborSet, neighborsOfSet } from './hex.js';
+import { POI_COLOR_HEX } from './socket.js';
 
 export const BIOME_COLORS = {
   mountains: { overlay: 'rgba(140,140,170,0.32)', swatch: 'rgba(140,140,170,0.70)' },
@@ -16,6 +17,62 @@ function fillHex(ctx, cx, cy, size) {
   for (let i = 1; i < 6; i++) ctx.lineTo(verts[i].x, verts[i].y);
   ctx.closePath();
   ctx.fill();
+}
+
+function drawFlag(ctx, cx, cy, color, { dim = false } = {}) {
+  // Pole rooted just below center, banner waving right. Anchor point is the
+  // pole's base at (cx, cy).
+  const fill = POI_COLOR_HEX[color] || '#ddd';
+  const poleH = 36;
+  const bannerW = 26;
+  const bannerH = 18;
+  const poleX = cx;
+  const poleBaseY = cy + 12;
+  const poleTopY = poleBaseY - poleH;
+  const alpha = dim ? 0.6 : 1;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+
+  // Shadow ellipse at base
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.beginPath();
+  ctx.ellipse(poleX, poleBaseY + 2, 8, 2.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Pole
+  ctx.strokeStyle = '#1a0e05';
+  ctx.lineWidth = 3.2;
+  ctx.beginPath();
+  ctx.moveTo(poleX, poleBaseY);
+  ctx.lineTo(poleX, poleTopY);
+  ctx.stroke();
+
+  // Pole knob at top
+  ctx.fillStyle = '#1a0e05';
+  ctx.beginPath();
+  ctx.arc(poleX, poleTopY, 2.6, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Banner (triangle pennant), thick outline for legibility
+  ctx.beginPath();
+  ctx.moveTo(poleX, poleTopY);
+  ctx.lineTo(poleX + bannerW, poleTopY + bannerH / 2);
+  ctx.lineTo(poleX, poleTopY + bannerH);
+  ctx.closePath();
+  ctx.fillStyle = fill;
+  ctx.fill();
+  ctx.strokeStyle = '#1a0e05';
+  ctx.lineWidth = 2.4;
+  ctx.stroke();
+  ctx.restore();
+}
+
+export function poiAnchorOffset(index) {
+  // Fan multiple POIs on the same hex: each subsequent flag shifts right.
+  return { dx: index * 18, dy: 0 };
 }
 
 function strokeHex(ctx, cx, cy, size) {
@@ -147,6 +204,26 @@ export function renderOverlay(ctx, state, isHost, dragPos, biomeOn) {
     ctx.arc(markerPos.x, markerPos.y, 12, 0, Math.PI * 2);
     ctx.fillStyle = '#cc2222';
     ctx.fill();
+  }
+
+  // Draw POI flags. Group by hex so we can fan duplicates.
+  if (state.pois && state.pois.length > 0) {
+    const byHex = new Map();
+    for (const poi of state.pois) {
+      const k = `${poi.row},${poi.col}`;
+      if (!byHex.has(k)) byHex.set(k, []);
+      byHex.get(k).push(poi);
+    }
+    for (const [k, list] of byHex.entries()) {
+      const [r, c] = k.split(',').map(Number);
+      const { x, y } = hexCenter(r, c, originX, originY);
+      list.forEach((poi, i) => {
+        const { dx, dy } = poiAnchorOffset(i);
+        // GM-only POIs render dimmer for the host so they're visually distinct.
+        const dim = isHost && poi.visibility === 'gm';
+        drawFlag(ctx, x + dx - (list.length - 1) * 9, y + dy, poi.color, { dim });
+      });
+    }
   }
 
  // Draw pending request indicators

@@ -8,7 +8,13 @@ const {
   gridCanvasSize,
   hexNeighborsBounded: hexNeighbors,
 } = require('../index.js');
-const { MAX_PLAYERS_PER_LOBBY } = require('./protocol.js');
+const {
+  MAX_PLAYERS_PER_LOBBY,
+  POI_COLORS,
+  POI_MAX_PER_LOBBY,
+  POI_NAME_MAX,
+  POI_DESC_MAX,
+} = require('./protocol.js');
 
 class Lobby {
   constructor({ code, seed, rows, cols, hostToken, hostName, islands = false, mapOptions = {} }) {
@@ -39,6 +45,9 @@ class Lobby {
     this.revealed = new Set(); // Set of "r,c" strings
     this.fog = { host: true, players: true };
     this.pendingRequests = {}; // requestId -> { playerId, row, col, at }
+    this.pois = []; // [{ id, row, col, name, description, color, visibility, createdBy }]
+    this._poiMutCount = 0;
+    this._poiMutWindowStart = Date.now();
 
     this.createdAt = Date.now();
     this.lastActivityAt = Date.now();
@@ -97,6 +106,7 @@ class Lobby {
     this.revealed = new Set();
     this.marker = null;
     this.pendingRequests = {};
+    this.pois = [];
     // Reset per-player rate-limit counters (new game = fresh slate)
     this._moveReqLast = {};
     this._moveReqViolations = {};
@@ -191,7 +201,113 @@ class Lobby {
     this.lastActivityAt = Date.now();
   }
 
-  loadImportState({ status, fog, marker, revealedTiles }) {
+  canPoiMutate() {
+    const now = Date.now();
+    if (now - this._poiMutWindowStart > 1000) {
+      this._poiMutCount = 0;
+      this._poiMutWindowStart = now;
+    }
+    if (this._poiMutCount >= 5) return false;
+    this._poiMutCount++;
+    return true;
+  }
+
+  _sanitizePoiInput(input, { partial = false } = {}) {
+    if (!input || typeof input !== 'object') return { error: 'poi_invalid' };
+    const out = {};
+
+    if (input.row != null || input.col != null || !partial) {
+      const r = Number.isInteger(input.row) ? input.row : null;
+      const c = Number.isInteger(input.col) ? input.col : null;
+      if (r == null || c == null) return { error: 'poi_invalid' };
+      if (r < 0 || r >= this.rows || c < 0 || c >= this.cols) return { error: 'poi_invalid' };
+      out.row = r;
+      out.col = c;
+    }
+
+    if (input.name != null || !partial) {
+      if (typeof input.name !== 'string') return { error: 'poi_invalid' };
+      const name = input.name.trim().replace(/\s+/g, ' ');
+      if (name.length < 1 || [...name].length > POI_NAME_MAX) return { error: 'poi_invalid' };
+      out.name = name;
+    }
+
+    if (input.description != null) {
+      if (typeof input.description !== 'string') return { error: 'poi_invalid' };
+      const desc = input.description.replace(/\s+$/g, '');
+      if ([...desc].length > POI_DESC_MAX) return { error: 'poi_invalid' };
+      out.description = desc;
+    } else if (!partial) {
+      out.description = '';
+    }
+
+    if (input.color != null || !partial) {
+      if (!POI_COLORS.includes(input.color)) return { error: 'poi_invalid' };
+      out.color = input.color;
+    }
+
+    if (input.visibility != null || !partial) {
+      const v = input.visibility ?? 'public';
+      if (v !== 'public' && v !== 'gm') return { error: 'poi_invalid' };
+      out.visibility = v;
+    }
+
+    return { data: out };
+  }
+
+  createPoi(input, byRole, byPlayerId) {
+    if (this.pois.length >= POI_MAX_PER_LOBBY) return { error: 'poi_limit' };
+    const s = this._sanitizePoiInput(input, { partial: false });
+    if (s.error) return s;
+    if (s.data.visibility === 'gm' && byRole !== 'host') {
+      s.data.visibility = 'public';
+    }
+    const poi = {
+      id: 'poi_' + crypto.randomBytes(4).toString('hex'),
+      ...s.data,
+      createdBy: byRole === 'host' ? 'host' : byPlayerId,
+    };
+    this.pois.push(poi);
+    this.lastActivityAt = Date.now();
+    return { poi };
+  }
+
+  updatePoi(id, patch, byRole) {
+    const idx = this.pois.findIndex(p => p.id === id);
+    if (idx === -1) return { error: 'poi_not_found' };
+    const s = this._sanitizePoiInput(patch, { partial: true });
+    if (s.error) return s;
+    if (s.data.visibility === 'gm' && byRole !== 'host') {
+      delete s.data.visibility;
+    }
+    const before = { ...this.pois[idx] };
+    const after = { ...before, ...s.data };
+    this.pois[idx] = after;
+    this.lastActivityAt = Date.now();
+    return { before, after };
+  }
+
+  deletePoi(id) {
+    const idx = this.pois.findIndex(p => p.id === id);
+    if (idx === -1) return { error: 'poi_not_found' };
+    const removed = this.pois[idx];
+    this.pois.splice(idx, 1);
+    this.lastActivityAt = Date.now();
+    return { poi: removed };
+  }
+
+  isPoiVisible(poi, role) {
+    if (role === 'host') return true;
+    if (poi.visibility !== 'public') return false;
+    return this.revealed.has(`${poi.row},${poi.col}`);
+  }
+
+  getVisiblePois(role) {
+    if (role === 'host') return this.pois.slice();
+    return this.pois.filter(p => this.isPoiVisible(p, role));
+  }
+
+  loadImportState({ status, fog, marker, revealedTiles, pois }) {
     const validFog = fog
       && typeof fog.host === 'boolean'
       && typeof fog.players === 'boolean'
@@ -215,6 +331,38 @@ class Lobby {
 
     if (marker && inBounds(marker.row, marker.col)) {
       this.marker = { row: marker.row, col: marker.col };
+    }
+
+    if (Array.isArray(pois)) {
+      const loaded = [];
+      for (const p of pois) {
+        if (loaded.length >= POI_MAX_PER_LOBBY) break;
+        if (!p || typeof p !== 'object') continue;
+        if (!inBounds(p.row, p.col)) continue;
+        if (typeof p.name !== 'string') continue;
+        const name = p.name.trim().replace(/\s+/g, ' ');
+        if (name.length < 1 || [...name].length > POI_NAME_MAX) continue;
+        const description = typeof p.description === 'string'
+          ? p.description.slice(0, POI_DESC_MAX * 4)
+          : '';
+        if ([...description].length > POI_DESC_MAX) continue;
+        if (!POI_COLORS.includes(p.color)) continue;
+        const visibility = p.visibility === 'gm' ? 'gm' : 'public';
+        const id = (typeof p.id === 'string' && /^poi_[a-f0-9]{4,16}$/.test(p.id))
+          ? p.id
+          : 'poi_' + crypto.randomBytes(4).toString('hex');
+        loaded.push({
+          id,
+          row: p.row,
+          col: p.col,
+          name,
+          description,
+          color: p.color,
+          visibility,
+          createdBy: typeof p.createdBy === 'string' ? p.createdBy : 'host',
+        });
+      }
+      this.pois = loaded;
     }
     // Only 'ready' is honored on import; any other value (including 'preview')
     // leaves the lobby in its current 'rendering' state, which will transition
@@ -261,6 +409,7 @@ class Lobby {
       hostConnected: this.hostConnected,
       biomeTags: this.biomeTags,
       createdAt: this.createdAt,
+      pois: this.pois.map(p => ({ ...p })),
     };
   }
 
@@ -289,6 +438,7 @@ class Lobby {
       pendingRequests: this._pendingRequestsWire({ sort: true }),
       biomeTags: this.biomeTags,
       mapOptions: this.mapOptions,
+      pois: this.getVisiblePois(role),
     };
     if (role === 'host') return { ...base, role: 'host' };
     return { ...base, role: 'player', playerId };

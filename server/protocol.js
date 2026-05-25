@@ -9,6 +9,9 @@ const EVENTS = {
   START_GAME: 'start_game',
   REGENERATE_MAP: 'regenerate_map',
   UPDATE_MAP_OPTIONS: 'update_map_options',
+  POI_CREATE: 'poi_create',
+  POI_UPDATE: 'poi_update',
+  POI_DELETE: 'poi_delete',
 
   // Server → Client
   LOBBY_STATE: 'lobby_state',
@@ -21,6 +24,9 @@ const EVENTS = {
   LOBBY_CLOSED: 'lobby_closed',
   MAP_READY: 'map_ready',
   REQUEST_CANCELLED: 'request_cancelled',
+  POI_CREATED: 'poi_created',
+  POI_UPDATED: 'poi_updated',
+  POI_DELETED: 'poi_deleted',
 };
 
 const ERROR_CODES = {
@@ -36,9 +42,25 @@ const ERROR_CODES = {
   LOBBY_FULL: 'lobby_full',
   NO_SUCH_LOBBY: 'no_such_lobby',
   NAME_TAKEN: 'name_taken',
+  POI_NOT_FOUND: 'poi_not_found',
+  POI_INVALID: 'poi_invalid',
+  POI_LIMIT: 'poi_limit',
 };
+
+const POI_COLORS = ['pink', 'peach', 'cream', 'mint', 'sky', 'lavender'];
+const POI_MAX_PER_LOBBY = 50;
+const POI_NAME_MAX = 40;
+const POI_DESC_MAX = 240;
 
 // Max players in a lobby, host included. Mirror in web/js/socket.js.
 const MAX_PLAYERS_PER_LOBBY = 8;
 
-module.exports = { EVENTS, ERROR_CODES, MAX_PLAYERS_PER_LOBBY };
+module.exports = {
+  EVENTS,
+  ERROR_CODES,
+  MAX_PLAYERS_PER_LOBBY,
+  POI_COLORS,
+  POI_MAX_PER_LOBBY,
+  POI_NAME_MAX,
+  POI_DESC_MAX,
+};

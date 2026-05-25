@@ -202,11 +202,11 @@ async function createLobbyAndRender(req, res, { onReady, errorLabel, requireSeed
 }
 
 app.post('/api/lobbies/import', (req, res) => {
-  const { status, fog, marker, revealedTiles } = req.body;
+  const { status, fog, marker, revealedTiles, pois } = req.body;
   return createLobbyAndRender(req, res, {
     errorLabel: 'Import render',
     requireSeed: true,
-    onReady: (l) => l.loadImportState({ status, fog, marker, revealedTiles }),
+    onReady: (l) => l.loadImportState({ status, fog, marker, revealedTiles, pois }),
   });
 });
 
@@ -369,6 +369,21 @@ io.on('connection', (socket) => {
     for (const req of cancelled) {
       io.to(lobby.code).emit(EVENTS.REQUEST_CANCELLED, { requestId: req.requestId, reason: 'marker_moved' });
     }
+    // Reveal any public POIs whose hex just became revealed.
+    if (revealedDelta.length > 0) {
+      const newKeys = new Set(revealedDelta.map(([r, c]) => `${r},${c}`));
+      const newlyVisible = lobby.pois.filter(p =>
+        p.visibility === 'public' && newKeys.has(`${p.row},${p.col}`)
+      );
+      if (newlyVisible.length > 0) {
+        io.in(lobby.code).fetchSockets().then(sockets => {
+          for (const s of sockets) {
+            if (!s.data.authenticated || s.data.isHost) continue;
+            for (const poi of newlyVisible) s.emit(EVENTS.POI_CREATED, { poi });
+          }
+        });
+      }
+    }
   });
 
   socket.on(EVENTS.MOVE_REQUEST, ({ row, col } = {}) => {
@@ -423,6 +438,70 @@ io.on('connection', (socket) => {
     if (!lobby) return;
     if (!lobby.acknowledgeRequest(requestId)) return;
     io.to(lobby.code).emit(EVENTS.REQUEST_CANCELLED, { requestId, reason: 'acknowledged' });
+  });
+
+  async function broadcastPoiChange(lobby, before, after) {
+    // before: prior POI (or null on create). after: new POI (or null on delete).
+    // Host always receives the full change. Players see public+revealed POIs only;
+    // a visibility/reveal transition emits CREATE/DELETE rather than UPDATE.
+    const sockets = await io.in(lobby.code).fetchSockets();
+    for (const s of sockets) {
+      if (!s.data.authenticated) continue;
+      if (s.data.isHost) {
+        if (!before && after) s.emit(EVENTS.POI_CREATED, { poi: after });
+        else if (before && !after) s.emit(EVENTS.POI_DELETED, { id: before.id });
+        else if (before && after) s.emit(EVENTS.POI_UPDATED, { poi: after });
+        continue;
+      }
+      const role = 'player';
+      const wasVisible = before ? lobby.isPoiVisible(before, role) : false;
+      const nowVisible = after ? lobby.isPoiVisible(after, role) : false;
+      if (!wasVisible && nowVisible) {
+        s.emit(EVENTS.POI_CREATED, { poi: after });
+      } else if (wasVisible && !nowVisible) {
+        s.emit(EVENTS.POI_DELETED, { id: before.id });
+      } else if (wasVisible && nowVisible) {
+        s.emit(EVENTS.POI_UPDATED, { poi: after });
+      }
+    }
+  }
+
+  socket.on(EVENTS.POI_CREATE, (payload = {}) => {
+    if (!socket.data.authenticated) return;
+    const lobby = manager.getLobby(socket.data.lobbyCode);
+    if (!lobby) return;
+    if (lobby.status !== 'ready') return emitError(socket, ERROR_CODES.LOBBY_NOT_READY, 'Map not ready');
+    if (!lobby.canPoiMutate()) return emitError(socket, ERROR_CODES.RATE_LIMITED, 'Slow down');
+    const role = socket.data.isHost ? 'host' : 'player';
+    const result = lobby.createPoi(payload, role, socket.data.playerId);
+    if (result.error) return emitError(socket, result.error, result.error);
+    broadcastPoiChange(lobby, null, result.poi);
+  });
+
+  socket.on(EVENTS.POI_UPDATE, (payload = {}) => {
+    if (!socket.data.authenticated) return;
+    const lobby = manager.getLobby(socket.data.lobbyCode);
+    if (!lobby) return;
+    if (lobby.status !== 'ready') return emitError(socket, ERROR_CODES.LOBBY_NOT_READY, 'Map not ready');
+    if (typeof payload.id !== 'string') return emitError(socket, ERROR_CODES.POI_INVALID, 'Missing id');
+    if (!lobby.canPoiMutate()) return emitError(socket, ERROR_CODES.RATE_LIMITED, 'Slow down');
+    const role = socket.data.isHost ? 'host' : 'player';
+    const { id, ...patch } = payload;
+    const result = lobby.updatePoi(id, patch, role);
+    if (result.error) return emitError(socket, result.error, result.error);
+    broadcastPoiChange(lobby, result.before, result.after);
+  });
+
+  socket.on(EVENTS.POI_DELETE, (payload = {}) => {
+    if (!socket.data.authenticated) return;
+    const lobby = manager.getLobby(socket.data.lobbyCode);
+    if (!lobby) return;
+    if (lobby.status !== 'ready') return emitError(socket, ERROR_CODES.LOBBY_NOT_READY, 'Map not ready');
+    if (typeof payload.id !== 'string') return emitError(socket, ERROR_CODES.POI_INVALID, 'Missing id');
+    if (!lobby.canPoiMutate()) return emitError(socket, ERROR_CODES.RATE_LIMITED, 'Slow down');
+    const result = lobby.deletePoi(payload.id);
+    if (result.error) return emitError(socket, result.error, result.error);
+    broadcastPoiChange(lobby, result.poi, null);
   });
 
   socket.on(EVENTS.NEW_GAME, () => {

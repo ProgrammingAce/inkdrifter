@@ -21,6 +21,10 @@
         <div id="marker-banner"></div>
       </div>
     </div>
+    <div id="poi-tray" class="poi-tray" hidden>
+      <div class="poi-tray-label">Drag a flag onto the map</div>
+      <div class="poi-tray-flags" id="poi-tray-flags"></div>
+    </div>
     <div id="biome-legend" class="biome-legend">
       <div class="legend-title">Biomes</div>
       <div class="legend-row" data-biome="mountains">Mountains</div>
@@ -80,6 +84,14 @@
       </div>
     </div>
 
+    <!-- Points of interest -->
+    <div id="poi-section" class="sidebar-section" style="display:none;">
+      <h3>Points of Interest</h3>
+      <button id="poi-tray-btn" class="btn-secondary" style="width:100%;">
+        &#x1f6a9; Show Flag Tray
+      </button>
+    </div>
+
     <!-- Pending requests -->
     <div class="sidebar-section">
       <h3>Move Requests</h3>
@@ -120,6 +132,6 @@
 <div id="toast" class="toast"></div>
 
 <script src="/socket.io/socket.io.js"></script>
-<script type="module" src="/js/lobby.js?v=14"></script>
+<script type="module" src="/js/lobby.js?v=17"></script>
 </body>
 </html>

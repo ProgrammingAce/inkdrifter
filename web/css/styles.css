@@ -714,3 +714,140 @@ input[type="range"] {
   border-radius: 2px;
   border: 1px solid rgba(107,58,31,0.6);
 }
+
+/* ── POI ── */
+.poi-list { list-style: none; display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; max-height: 360px; overflow-y: auto; }
+.poi-list-empty { font-size: 0.9rem; color: var(--text-light); font-style: italic; opacity: 0.7; padding: 8px 0; }
+.poi-list-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.poi-list-item:hover { border-color: var(--text-gold); }
+.poi-flag-swatch {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border-radius: 3px;
+  border: 1px solid rgba(40,20,10,0.6);
+  margin-top: 2px;
+}
+.poi-info { flex: 1; min-width: 0; }
+.poi-name { font-family: var(--font-head); color: var(--text-gold); font-size: 0.95rem; }
+.poi-meta { font-size: 0.78rem; color: var(--text-light); opacity: 0.8; margin-top: 2px; }
+.poi-desc { font-size: 0.85rem; color: var(--text-light); margin-top: 4px; white-space: pre-wrap; word-break: break-word; }
+.poi-actions { display: flex; align-items: center; gap: 6px; }
+
+.poi-coords { font-size: 0.85rem; color: var(--text-light); opacity: 0.8; margin-bottom: 10px; }
+
+.poi-color-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
+  margin-top: 4px;
+}
+.poi-color-swatch {
+  height: 32px;
+  border-radius: 4px;
+  border: 2px solid rgba(40,20,10,0.5);
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.1s, border-color 0.1s;
+}
+.poi-color-swatch:hover { transform: scale(1.05); }
+.poi-color-swatch.selected {
+  border-color: var(--text-gold);
+  box-shadow: 0 0 0 2px var(--bg-panel), 0 0 0 4px var(--text-gold);
+}
+
+.poi-vis-row { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.poi-vis-row label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  color: var(--text-light);
+  cursor: pointer;
+}
+.poi-vis-row input[type="radio"] { accent-color: var(--accent); }
+
+.poi-edit-footer { justify-content: space-between; }
+.poi-delete-btn { margin-top: 0; width: auto; min-width: 90px; }
+.poi-edit-footer .btn-secondary { width: auto; min-width: 90px; }
+.poi-edit-footer .btn { width: auto; min-width: 90px; margin-top: 0; }
+.poi-edit-footer { display: flex; gap: 10px; }
+
+textarea[data-pe="description"] {
+  width: 100%;
+  background: var(--parchment);
+  color: var(--text-dark);
+  border: 1px solid var(--parchment-dark);
+  border-radius: 3px;
+  padding: 8px 10px;
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  outline: none;
+  resize: vertical;
+}
+textarea[data-pe="description"]:focus { border-color: var(--text-gold); }
+
+/* ── POI tray (bottom of map area) ── */
+.poi-tray {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  background: rgba(26,14,5,0.95);
+  border: 2px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 18px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  backdrop-filter: blur(4px);
+}
+.poi-tray[hidden] { display: none; }
+.poi-tray-label {
+  font-family: var(--font-head);
+  font-size: 0.78rem;
+  color: var(--text-gold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.poi-tray-flags {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+.poi-tray-flag {
+  cursor: grab;
+  padding: 4px 6px;
+  border-radius: 4px;
+  transition: background 0.15s, transform 0.1s;
+  user-select: none;
+  touch-action: none;
+}
+.poi-tray-flag:hover { background: rgba(212,163,74,0.15); transform: translateY(-2px); }
+.poi-tray-flag:active { cursor: grabbing; }
+.poi-tray-flag svg { display: block; pointer-events: none; }
+
+.poi-drag-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  transform: translate(-50%, -90%);
+  pointer-events: none;
+  z-index: 1000;
+  opacity: 0.9;
+  filter: drop-shadow(0 4px 6px rgba(0,0,0,0.5));
+}
+.poi-drag-ghost.over-hex { opacity: 1; transform: translate(-50%, -90%) scale(1.05); }

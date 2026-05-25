@@ -3,6 +3,7 @@ import { loadBaseMap, startRenderLoop, BIOME_COLORS } from './render.js';
 import { initInput, scrollToMarker, initZoom } from './input.js';
 import { hexCenter } from './hex.js';
 import { mountMapSettingsModal } from './mapSettingsModal.js?v=3';
+import { initPoiModals } from './poiModal.js?v=1';
 import { encodePackedSeed } from './seedCodec.js';
 
 function packedSeedFor(s) {
@@ -28,6 +29,7 @@ let mapLoaded = false;
 let dragPos = null;
 let previousMarker = null;
 let biomeOverlayOn = false;
+let poiModals = null;
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 const loadingEl = document.getElementById('loading');
@@ -72,6 +74,7 @@ function showToast(msg, isError = false) {
 function applyState(data) {
   state = data;
   state._revealedSet = new Set(data.revealed.map(([r, c]) => `${r},${c}`));
+  state.pois = Array.isArray(data.pois) ? data.pois : [];
   if (lobbyCodeEl) lobbyCodeEl.textContent = data.code;
   if (seedEl) seedEl.textContent = packedSeedFor(data);
   updatePlayerList();
@@ -206,6 +209,8 @@ function showInGameUI() {
   }
   const pending = document.querySelector('#pending-list');
   if (pending) pending.closest('.sidebar-section').style.display = '';
+  const poiSection = document.getElementById('poi-section');
+  if (poiSection) poiSection.style.display = '';
 }
 
 function hidePreviewUI() {
@@ -261,6 +266,9 @@ async function initMap() {
     getIsHost: () => isHost,
     socket,
     onDragPos: (pos) => { dragPos = pos; },
+    onPoiClick: (poi) => {
+      if (poiModals) poiModals.openEdit({ poi });
+    },
   });
 
   initZoom();
@@ -336,6 +344,7 @@ fetch(`/api/lobbies/${code}`)
         fog: { host: true, players: true },
         pendingRequests: [],
         biomeTags: lobbyStatus.biomeTags || {},
+        pois: [],
       };
       state = initialData;
       _mapLoadPending = true;
@@ -349,7 +358,7 @@ fetch(`/api/lobbies/${code}`)
         _mapLoadPending = false;
       });
     } else if (lobbyStatus.status === 'rendering' && !state) {
-      state = { ...lobbyStatus, _revealedSet: new Set(), revealed: [], players: {}, marker: null, fog: { host: true, players: true }, pendingRequests: [], biomeTags: lobbyStatus.biomeTags || {} };
+      state = { ...lobbyStatus, _revealedSet: new Set(), revealed: [], players: {}, marker: null, fog: { host: true, players: true }, pendingRequests: [], biomeTags: lobbyStatus.biomeTags || {}, pois: [] };
     }
   });
 
@@ -411,6 +420,28 @@ socket.on(EVENTS.REQUEST_CANCELLED, ({ requestId }) => {
   updatePendingList();
 });
 
+socket.on(EVENTS.POI_CREATED, ({ poi }) => {
+  if (!state) return;
+  if (!Array.isArray(state.pois)) state.pois = [];
+  if (state.pois.some(p => p.id === poi.id)) return;
+  state.pois.push(poi);
+  if (poiModals) poiModals.renderList();
+});
+
+socket.on(EVENTS.POI_UPDATED, ({ poi }) => {
+  if (!state || !Array.isArray(state.pois)) return;
+  const idx = state.pois.findIndex(p => p.id === poi.id);
+  if (idx === -1) state.pois.push(poi);
+  else state.pois[idx] = poi;
+  if (poiModals) poiModals.renderList();
+});
+
+socket.on(EVENTS.POI_DELETED, ({ id }) => {
+  if (!state || !Array.isArray(state.pois)) return;
+  state.pois = state.pois.filter(p => p.id !== id);
+  if (poiModals) poiModals.renderList();
+});
+
 socket.on(EVENTS.FOG_CHANGED, ({ hostFog, playerFog }) => {
   if (!state) return;
   state.fog = { host: hostFog, players: playerFog };
@@ -438,6 +469,9 @@ socket.on(EVENTS.ERROR, ({ code: errCode, message }) => {
     marker_not_placed: 'The marker has not been placed yet.',
     rate_limited: 'Too many requests. Please slow down.',
     lobby_not_ready: 'The lobby is still loading.',
+    poi_not_found: 'That POI no longer exists.',
+    poi_invalid: 'Invalid POI data.',
+    poi_limit: 'POI limit reached for this lobby.',
   };
   showToast(friendly[errCode] || message || 'An error occurred.', true);
 });
@@ -527,6 +561,24 @@ if (isHost && fogControlsEl) {
         showToast('Game state exported.');
       })
       .catch(() => showToast('Failed to export game state.', true));
+  });
+}
+
+// ── POI modal + sidebar wiring ────────────────────────────────────────────────
+poiModals = initPoiModals({
+  socket,
+  getState: () => state,
+  getIsHost: () => isHost,
+  showToast,
+});
+
+const poiTrayBtn = document.getElementById('poi-tray-btn');
+let trayShown = false;
+if (poiTrayBtn) {
+  poiTrayBtn.addEventListener('click', () => {
+    trayShown = !trayShown;
+    poiModals.toggleTray(trayShown);
+    poiTrayBtn.innerHTML = trayShown ? '\u{1f6a9} Hide Flag Tray' : '\u{1f6a9} Show Flag Tray';
   });
 }
 

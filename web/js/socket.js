@@ -18,7 +18,25 @@ export const EVENTS = {
   LOBBY_CLOSED: 'lobby_closed',
   MAP_READY: 'map_ready',
   REQUEST_CANCELLED: 'request_cancelled',
+  POI_CREATE: 'poi_create',
+  POI_UPDATE: 'poi_update',
+  POI_DELETE: 'poi_delete',
+  POI_CREATED: 'poi_created',
+  POI_UPDATED: 'poi_updated',
+  POI_DELETED: 'poi_deleted',
 };
+
+export const POI_COLORS = ['pink', 'peach', 'cream', 'mint', 'sky', 'lavender'];
+export const POI_COLOR_HEX = {
+  pink:     '#f4b6c2',
+  peach:    '#fcc8a1',
+  cream:    '#f5e6a8',
+  mint:     '#b8e2c8',
+  sky:      '#b6d4f0',
+  lavender: '#d4c5e8',
+};
+export const POI_NAME_MAX = 40;
+export const POI_DESC_MAX = 240;
 
 // Keep in sync with server/protocol.js MAX_PLAYERS_PER_LOBBY.
 export const MAX_PLAYERS_PER_LOBBY = 8;
@@ -33,6 +51,9 @@ export const ERROR_CODES = {
   LOBBY_NOT_READY: 'lobby_not_ready',
   LOBBY_CLOSED: 'lobby_closed',
   PAYLOAD_TOO_LARGE: 'payload_too_large',
+  POI_NOT_FOUND: 'poi_not_found',
+  POI_INVALID: 'poi_invalid',
+  POI_LIMIT: 'poi_limit',
 };
 
 export function createSocket() {

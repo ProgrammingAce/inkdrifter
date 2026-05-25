@@ -8,10 +8,37 @@ import { EVENTS } from './socket.js';
 // first closure is correct.
 let _bound = false;
 
-export function initInput({ overlayCanvas, getState, getIsHost, socket, onDragPos }) {
+export function initInput({ overlayCanvas, getState, getIsHost, socket, onDragPos, onPoiClick }) {
   if (_bound) return;
   _bound = true;
   let dragging = false;
+
+  // Hit test a click against rendered POI flag positions. Mirrors the layout
+  // used by render.js drawFlag/poiAnchorOffset.
+  function findFlagAt(state, px, py) {
+    if (!state || !Array.isArray(state.pois) || state.pois.length === 0) return null;
+    const byHex = new Map();
+    for (const poi of state.pois) {
+      const k = `${poi.row},${poi.col}`;
+      if (!byHex.has(k)) byHex.set(k, []);
+      byHex.get(k).push(poi);
+    }
+    for (const [k, list] of byHex.entries()) {
+      const [r, c] = k.split(',').map(Number);
+      const { x, y } = hexCenter(r, c, state.originX, state.originY);
+      for (let i = list.length - 1; i >= 0; i--) {
+        const flagX = x + i * 18 - (list.length - 1) * 9;
+        const flagY = y;
+        // Banner+pole bounding region (see drawFlag dimensions)
+        const dx = px - flagX;
+        const dy = py - flagY;
+        if (dx >= -6 && dx <= 30 && dy >= -36 && dy <= 14) {
+          return list[i];
+        }
+      }
+    }
+    return null;
+  }
 
   function canvasPos(e) {
     const rect = overlayCanvas.getBoundingClientRect();
@@ -28,6 +55,12 @@ export function initInput({ overlayCanvas, getState, getIsHost, socket, onDragPo
   }
 
   overlayCanvas.addEventListener('mousedown', (e) => {
+    // If clicking on an existing flag, suppress marker-drag (click handler will open editor).
+    const state0 = getState();
+    if (state0) {
+      const { px: px0, py: py0 } = canvasPos(e);
+      if (findFlagAt(state0, px0, py0)) return;
+    }
     if (!getIsHost()) return;
     const state = getState();
     if (!state || !state.marker) return;
@@ -44,6 +77,15 @@ export function initInput({ overlayCanvas, getState, getIsHost, socket, onDragPo
 
   window.addEventListener('mousemove', (e) => {
     if (!dragging) {
+      // Hover over a flag → pointer cursor.
+      const st = getState();
+      if (st) {
+        const { px, py } = canvasPos(e);
+        if (findFlagAt(st, px, py)) {
+          overlayCanvas.style.cursor = 'pointer';
+          return;
+        }
+      }
       // Update cursor for visible tiles (player only)
       if (!getIsHost()) {
         const state = getState();
@@ -80,6 +122,16 @@ export function initInput({ overlayCanvas, getState, getIsHost, socket, onDragPo
   });
 
   overlayCanvas.addEventListener('click', (e) => {
+    // Click on an existing flag → open its editor.
+    const stateFlag = getState();
+    if (stateFlag) {
+      const { px, py } = canvasPos(e);
+      const flag = findFlagAt(stateFlag, px, py);
+      if (flag) {
+        if (onPoiClick) onPoiClick(flag);
+        return;
+      }
+    }
     if (getIsHost()) {
       const state = getState();
       if (!state) return;
