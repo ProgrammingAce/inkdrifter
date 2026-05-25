@@ -47,6 +47,9 @@ const EDIT_HTML = `
           <label><input type="radio" name="poi-visibility" value="public" data-pe-vis="public"> <span>Public (everyone)</span></label>
         </div>
       </div>
+      <div class="form-group form-check" data-pe-player-edit hidden>
+        <label><input type="checkbox" data-pe="playerEdit"> <span>Players can edit name &amp; description</span></label>
+      </div>
     </div>
     <footer class="modal-footer poi-edit-footer">
       <button type="button" class="btn-danger poi-delete-btn" data-pe-delete hidden>Delete</button>
@@ -80,6 +83,8 @@ export function initPoiModals({ socket, getState, getIsHost, showToast }) {
   const peVisGroup = editRoot.querySelector('[data-pe-visibility-group]');
   const peVisPublic = editRoot.querySelector('[data-pe-vis="public"]');
   const peVisGm = editRoot.querySelector('[data-pe-vis="gm"]');
+  const pePlayerEditGroup = editRoot.querySelector('[data-pe-player-edit]');
+  const pePlayerEdit = editRoot.querySelector('[data-pe="playerEdit"]');
   const peDeleteBtn = editRoot.querySelector('[data-pe-delete]');
   const peSaveBtn = editRoot.querySelector('[data-pe-save]');
   const peCancelBtn = editRoot.querySelector('[data-pe-cancel]');
@@ -119,7 +124,6 @@ export function initPoiModals({ socket, getState, getIsHost, showToast }) {
     editingPoi = poi;
     pendingHex = poi ? { row: poi.row, col: poi.col } : hex;
     if (!pendingHex) return;
-    peTitle.textContent = poi ? 'Edit POI' : 'New POI';
     peCoords.textContent = `Tile (${pendingHex.row}, ${pendingHex.col})`;
     peName.value = poi ? poi.name : '';
     peDesc.value = poi ? (poi.description || '') : '';
@@ -127,11 +131,19 @@ export function initPoiModals({ socket, getState, getIsHost, showToast }) {
     updateColorSelection();
     const isHost = getIsHost();
     peVisGroup.hidden = !isHost;
+    pePlayerEditGroup.hidden = !isHost;
     if (isHost) {
       const v = poi ? poi.visibility : 'gm';
       peVisPublic.checked = v === 'public';
       peVisGm.checked = v === 'gm';
+      pePlayerEdit.checked = poi ? (poi.editableByPlayers ?? false) : false;
     }
+    const canEdit = isHost || !poi || (poi && poi.editableByPlayers);
+    peTitle.textContent = poi && !canEdit ? 'POI Details' : (poi ? 'Edit POI' : 'New POI');
+    peName.readOnly = !canEdit;
+    peDesc.readOnly = !canEdit;
+    peColorsEl.classList.toggle('locked', !canEdit);
+    peSaveBtn.textContent = canEdit ? 'Save' : 'Done';
     peDeleteBtn.hidden = !poi;
     editRoot.hidden = false;
     setTimeout(() => peName.focus(), 0);
@@ -226,6 +238,11 @@ export function initPoiModals({ socket, getState, getIsHost, showToast }) {
 
   peSaveBtn.addEventListener('click', () => {
     const name = peName.value.trim();
+    const canEdit = getIsHost() || !editingPoi || (editingPoi && editingPoi.editableByPlayers);
+    if (!canEdit) {
+      closeEdit();
+      return;
+    }
     if (!name) {
       if (showToast) showToast('Name is required.', true);
       peName.focus();
@@ -240,6 +257,7 @@ export function initPoiModals({ socket, getState, getIsHost, showToast }) {
         description,
         color: selectedColor,
         visibility,
+        editableByPlayers: getIsHost() ? pePlayerEdit.checked : undefined,
       });
     } else {
       socket.emit(EVENTS.POI_CREATE, {
@@ -249,6 +267,7 @@ export function initPoiModals({ socket, getState, getIsHost, showToast }) {
         description,
         color: selectedColor,
         visibility,
+        editableByPlayers: getIsHost() ? pePlayerEdit.checked : undefined,
       });
     }
     closeEdit();

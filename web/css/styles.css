@@ -765,6 +765,11 @@ input[type="range"] {
   border-color: var(--text-gold);
   box-shadow: 0 0 0 2px var(--bg-panel), 0 0 0 4px var(--text-gold);
 }
+.poi-color-grid.locked .poi-color-swatch {
+  opacity: 0.3;
+  pointer-events: none;
+  cursor: not-allowed;
+}
 
 .poi-vis-row { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
 .poi-vis-row label {

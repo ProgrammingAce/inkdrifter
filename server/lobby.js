@@ -246,13 +246,17 @@ class Lobby {
       out.color = input.color;
     }
 
-    if (input.visibility != null || !partial) {
-      const v = input.visibility ?? 'public';
-      if (v !== 'public' && v !== 'gm') return { error: 'poi_invalid' };
-      out.visibility = v;
-    }
+if (input.visibility != null || !partial) {
+       const v = input.visibility ?? 'public';
+       if (v !== 'public' && v !== 'gm') return { error: 'poi_invalid' };
+       out.visibility = v;
+     }
 
-    return { data: out };
+     if (input.editableByPlayers != null || !partial) {
+       out.editableByPlayers = !!input.editableByPlayers;
+     }
+
+     return { data: out };
   }
 
   createPoi(input, byRole, byPlayerId) {
@@ -261,6 +265,9 @@ class Lobby {
     if (s.error) return s;
     if (s.data.visibility === 'gm' && byRole !== 'host') {
       s.data.visibility = 'public';
+    }
+    if (byRole !== 'host') {
+      delete s.data.editableByPlayers;
     }
     const poi = {
       id: 'poi_' + crypto.randomBytes(4).toString('hex'),
@@ -277,8 +284,16 @@ class Lobby {
     if (idx === -1) return { error: 'poi_not_found' };
     const s = this._sanitizePoiInput(patch, { partial: true });
     if (s.error) return s;
+    const existing = this.pois[idx];
+    if (byRole !== 'host' && !existing.editableByPlayers) {
+      delete s.data.name;
+      delete s.data.description;
+    }
     if (s.data.visibility === 'gm' && byRole !== 'host') {
       delete s.data.visibility;
+    }
+    if (byRole !== 'host') {
+      delete s.data.editableByPlayers;
     }
     const before = { ...this.pois[idx] };
     const after = { ...before, ...s.data };
@@ -434,8 +449,8 @@ class Lobby {
       players: this._playersWire(),
       marker: this.marker,
       revealed: this._revealedTiles(),
-      fog: this.fog,
-      pendingRequests: this._pendingRequestsWire({ sort: true }),
+     fog: this.fog,
+       pendingRequests: this._pendingRequestsWire({ sort: true }),
       biomeTags: this.biomeTags,
       mapOptions: this.mapOptions,
       pois: this.getVisiblePois(role),
