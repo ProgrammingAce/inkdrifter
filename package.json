@@ -6,10 +6,13 @@
   "main": "index.js",
   "scripts": {
     "start": "node server/main.js",
-    "dev": "node --watch server/main.js"
+    "dev": "node --watch server/main.js",
+    "build": "node scripts/build.mjs"
   },
-  "dependencies": {
+  "dependencies": {},
+  "devDependencies": {
     "canvas": "^3.2.3",
+    "esbuild": "^0.24.0",
     "express": "^5.2.1",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3"

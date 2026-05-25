@@ -51,6 +51,7 @@ importFileInput.addEventListener('change', async (e) => {
           fog: data.fog,
           marker: data.marker,
           revealedTiles: data.revealedTiles,
+          pois: data.pois,
         }),
       });
       const result = await res.json();

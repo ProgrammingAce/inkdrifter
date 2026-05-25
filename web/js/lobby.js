@@ -1,9 +1,10 @@
 import { EVENTS, ERROR_CODES, createSocket } from './socket.js';
-import { loadBaseMap, startRenderLoop, BIOME_COLORS } from './render.js';
+import { renderMap } from './renderMap.js';
+import { startRenderLoop, BIOME_COLORS } from './render.js';
 import { initInput, scrollToMarker, initZoom } from './input.js';
 import { hexCenter } from './hex.js';
-import { mountMapSettingsModal } from './mapSettingsModal.js?v=3';
-import { initPoiModals } from './poiModal.js?v=1';
+import { mountMapSettingsModal } from './mapSettingsModal.js';
+import { initPoiModals } from './poiModal.js';
 import { encodePackedSeed } from './seedCodec.js';
 
 function packedSeedFor(s) {
@@ -22,10 +23,11 @@ const playerToken = localStorage.getItem(`playerToken_${code}`);
 const isHost = !!hostToken;
 const myPlayerId = localStorage.getItem(`playerId_${code}`);
 const authToken = hostToken || playerToken;
-const tokenQS = authToken ? `token=${encodeURIComponent(authToken)}` : '';
+const authHeader = authToken ? { 'Authorization': `Bearer ${authToken}` } : {};
 
 let state = null;
 let mapLoaded = false;
+let mapRendered = false;
 let dragPos = null;
 let previousMarker = null;
 let biomeOverlayOn = false;
@@ -159,8 +161,8 @@ function updateMarkerBanner() {
   markerBannerEl.style.display = show ? '' : 'none';
   if (show) {
     markerBannerEl.textContent = isHost
-      ? 'Click any tile to place the marker.'
-      : 'Waiting for host to place the marker…';
+      ? "Click a tile to choose the players' starting point."
+      : 'Waiting for host to choose the starting point…';
   }
 }
 
@@ -220,11 +222,63 @@ function hidePreviewUI() {
 
 // ── Map loading ───────────────────────────────────────────────────────────────
 async function reloadMap() {
+  mapRendered = false;
   try {
-    await loadBaseMap(baseCanvas, `/lobbies/${code}/map.png?${tokenQS}`);
+    const opts = {
+      rows: state.rows,
+      cols: state.cols,
+      seed: state.seed,
+      originX: state.originX,
+      originY: state.originY,
+      width: baseCanvas.width,
+      height: baseCanvas.height,
+      supersample: 4,
+      drawGrid: state.mapOptions?.drawGrid ?? true,
+      drawOcean: state.mapOptions?.drawOcean ?? true,
+      drawRiver: state.mapOptions?.drawRiver ?? true,
+      placeCities: state.mapOptions?.placeCities ?? true,
+      oceanCap: state.mapOptions?.oceanCap,
+      riverCount: state.mapOptions?.riverCount,
+      cityCount: state.mapOptions?.cityCount,
+      elevationBias: state.mapOptions?.elevationBias,
+      humidityBias: state.mapOptions?.humidityBias,
+      sides: state.mapOptions?.sides,
+      islands: !!state.islands,
+    };
+    console.log('reloadMap starting...');
+    const result = renderMap(opts);
+    console.log('reloadMap done');
+    const outCtx = baseCanvas.getContext('2d');
+    outCtx.clearRect(0, 0, baseCanvas.width, baseCanvas.height);
+    outCtx.drawImage(result.canvas, 0, 0, baseCanvas.width, baseCanvas.height);
+    mapRendered = true;
+
+    if (result.biomes && result.biomes.tags) {
+      state.biomeTags = result.biomes.tags instanceof Map
+        ? Object.fromEntries(result.biomes.tags)
+        : result.biomes.tags;
+    }
+
+    if (isHost) {
+      try {
+        await fetch(`/api/lobbies/${code}/render-complete`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${hostToken}`,
+          },
+          body: JSON.stringify({ biomeTags: state.biomeTags || {} }),
+        });
+      } catch (e) {
+        console.error('Failed to notify render-complete:', e);
+      }
+    }
+
+    populateLegendSwatches();
+    updateLegendVisibility();
   } catch (err) {
-    console.error('Failed to reload map image:', err);
-    showToast('Failed to reload map.', true);
+    console.error('Failed to reload map:', err);
+    showToast('Failed to reload map: ' + (err?.message || err), true);
     return;
   }
 }
@@ -241,17 +295,73 @@ async function initMap() {
   mapStack.style.width = W + 'px';
   mapStack.style.height = H + 'px';
 
-  try {
-    const mapUrl = `/lobbies/${code}/map.png?v=${state.seed ?? 0}&${tokenQS}`;
-    await loadBaseMap(baseCanvas, mapUrl);
-  } catch (err) {
-    console.error('Failed to load map image:', err);
-    showToast('Failed to load map. Please refresh.', true);
-    return;
+  if (!mapRendered) {
+    try {
+      const opts = {
+        rows: state.rows,
+        cols: state.cols,
+        seed: state.seed,
+        originX: state.originX,
+        originY: state.originY,
+        width: W,
+        height: H,
+        supersample: 4,
+        drawGrid: state.mapOptions?.drawGrid ?? true,
+        drawOcean: state.mapOptions?.drawOcean ?? true,
+        drawRiver: state.mapOptions?.drawRiver ?? true,
+        placeCities: state.mapOptions?.placeCities ?? true,
+        oceanCap: state.mapOptions?.oceanCap,
+        riverCount: state.mapOptions?.riverCount,
+        cityCount: state.mapOptions?.cityCount,
+        elevationBias: state.mapOptions?.elevationBias,
+        humidityBias: state.mapOptions?.humidityBias,
+        sides: state.mapOptions?.sides,
+        islands: !!state.islands,
+      };
+      console.log('renderMap starting with opts:', opts);
+      const t0 = performance.now();
+      const result = renderMap(opts);
+      console.log('renderMap done in', (performance.now() - t0).toFixed(0), 'ms');
+      const outCtx = baseCanvas.getContext('2d');
+      outCtx.clearRect(0, 0, W, H);
+      outCtx.drawImage(result.canvas, 0, 0, W, H);
+      mapRendered = true;
+
+      if (result.biomes && result.biomes.tags) {
+        state.biomeTags = result.biomes.tags instanceof Map
+          ? Object.fromEntries(result.biomes.tags)
+          : result.biomes.tags;
+      }
+
+      if (isHost) {
+        try {
+          await fetch(`/api/lobbies/${code}/render-complete`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${hostToken}`,
+            },
+            body: JSON.stringify({ biomeTags: state.biomeTags || {} }),
+          });
+          console.log('render-complete notified');
+        } catch (e) {
+          console.error('Failed to notify render-complete:', e);
+        }
+      }
+
+      populateLegendSwatches();
+      updateLegendVisibility();
+    } catch (err) {
+      console.error('Failed to render map:', err);
+      showToast('Map render failed: ' + (err?.message || err) + '. Check console.', true);
+      return;
+    }
   }
+
   loadingEl.style.display = 'none';
   mapStack.style.display = 'block';
   mapLoaded = true;
+
   startRenderLoop(
     overlayCtx,
     () => state,
@@ -282,7 +392,7 @@ function tryLoadMap() {
   if (!state) return;
   if (mapLoaded) return;
   if (_mapLoadPending) return;
-  if (state.status !== 'preview' && state.status !== 'ready') return;
+  if (state.status !== 'preview' && state.status !== 'ready' && !(isHost && state.status === 'rendering')) return;
   _mapLoadPending = true;
   initMap()
     .then(() => {
@@ -307,34 +417,38 @@ socket.on(EVENTS.LOBBY_STATE, async (data) => {
     mapStack.style.display = 'none';
     hidePreviewUI();
     mapLoaded = false;
+    mapRendered = false;
+    if (isHost) tryLoadMap();
   } else if (data.status === 'preview' || data.status === 'ready') {
-    loadingEl.style.display = 'none';
-    mapStack.style.display = 'block';
-    if (mapLoaded) {
-      if (data.status === 'ready') showInGameUI();
-    } else {
+    if (!mapLoaded) {
       tryLoadMap();
+    } else if (data.status === 'ready') {
+      showInGameUI();
+    } else {
+      showPreviewUI();
     }
   }
 });
 
 socket.on(EVENTS.MAP_READY, () => {
+  mapRendered = false;
   tryLoadMap();
 });
 
 // Timeout to prevent stuck spinner
 let _mapLoadTimeout = setTimeout(() => {
   if (!mapLoaded && state) {
-    showToast('Map load timed out. Please refresh.', true);
+    showToast('Map render timed out — rendering large map, please wait…', true);
+    console.log('Map load timeout hit. status:', state.status, 'mapRendered:', mapRendered, 'mapLoaded:', mapLoaded);
   }
-}, 15000);
+}, 60000);
 
 // Fetch lobby status as a fallback if socket events don't arrive
 fetch(`/api/lobbies/${code}`)
   .then(res => res.ok ? res.json() : null)
   .then(lobbyStatus => {
     if (!lobbyStatus) return;
-    if (lobbyStatus.status === 'preview' && !mapLoaded && !_mapLoadPending) {
+    if ((lobbyStatus.status === 'preview' || (isHost && lobbyStatus.status === 'rendering')) && !mapLoaded && !_mapLoadPending) {
       const initialData = {
         ...lobbyStatus,
         _revealedSet: new Set(),
@@ -349,7 +463,8 @@ fetch(`/api/lobbies/${code}`)
       state = initialData;
       _mapLoadPending = true;
       initMap().then(() => {
-        showPreviewUI();
+        if (state?.status === 'ready') showInGameUI();
+        else showPreviewUI();
         clearTimeout(_mapLoadTimeout);
       }).catch(err => {
         console.error('Initial map load failed:', err);
@@ -472,6 +587,7 @@ socket.on(EVENTS.ERROR, ({ code: errCode, message }) => {
     poi_not_found: 'That POI no longer exists.',
     poi_invalid: 'Invalid POI data.',
     poi_limit: 'POI limit reached for this lobby.',
+    poi_in_fog: 'You can only place flags on visible tiles or tiles adjacent to them.',
   };
   showToast(friendly[errCode] || message || 'An error occurred.', true);
 });
@@ -532,18 +648,26 @@ if (isHost && fogControlsEl) {
   }
   document.getElementById('start-game-btn')?.addEventListener('click', () => {
     socket.emit(EVENTS.START_GAME);
+    if (!state?.marker) {
+      showToast("Click a tile to choose the players' starting point.");
+    }
   });
   document.getElementById('export-png-btn')?.addEventListener('click', () => {
-    const link = document.createElement('a');
-    link.href = `/lobbies/${code}/map.png?download=1&t=${Date.now()}&${tokenQS}`;
-    link.download = `inkdrifter-map-${code}.png`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    showToast('Map export started.');
+    baseCanvas.toBlob((blob) => {
+      if (!blob) { showToast('Failed to export map.', true); return; }
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `inkdrifter-map-${code}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      showToast('Map export started.');
+    }, 'image/png');
   });
   document.getElementById('export-json-btn')?.addEventListener('click', () => {
-    fetch(`/lobbies/${code}/game-state.json?t=${Date.now()}&${tokenQS}`)
+    fetch(`/lobbies/${code}/game-state.json?t=${Date.now()}`, { headers: authHeader })
       .then(res => {
         if (!res.ok) throw new Error('Export failed');
         return res.json();
@@ -587,6 +711,11 @@ if (biomeToggleEl) {
   biomeToggleEl.checked = biomeOverlayOn;
   biomeToggleEl.addEventListener('change', () => {
     biomeOverlayOn = biomeToggleEl.checked;
+    console.log('[biome-debug] toggle changed, on=', biomeOverlayOn,
+      'state.biomeTags keys=', state?.biomeTags ? Object.keys(state.biomeTags).length : 'no-state',
+      'biomeTags type=', state?.biomeTags?.constructor?.name);
+    window.__biomeDebugged = false;
+    window.__biomeDrawLogged = false;
     updateLegendVisibility();
   });
 }
@@ -597,12 +726,10 @@ if (!hostToken && !playerToken) {
   showToast('No credentials found. Returning to home.', true);
   setTimeout(() => { window.location.href = '/'; }, 2000);
 } else {
+  const role = hostToken ? 'host' : 'player';
+  const token = hostToken || playerToken;
+  socket.setCode(code, role, token);
   socket.connect();
-  socket.on('connect', () => {
-    const token = hostToken || playerToken;
-    const role = hostToken ? 'host' : 'player';
-    socket.emit(EVENTS.AUTH, { code, role, token });
-  });
   socket.on('connect_error', (err) => {
     console.error('Socket connection error:', err);
     showToast('Connection error. Please refresh.', true);

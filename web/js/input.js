@@ -71,10 +71,46 @@ export function initInput({ overlayCanvas, getState, getIsHost, socket, onDragPo
     const dy = py - mc.y;
     if (Math.sqrt(dx * dx + dy * dy) <= HEX_SIZE) {
       dragging = true;
+      hideTooltip();
       onDragPos({ x: px, y: py });
       e.preventDefault();
     }
   });
+
+  // POI hover tooltip — appears after a short delay over a flag.
+  const tooltipEl = document.createElement('div');
+  tooltipEl.className = 'poi-tooltip';
+  tooltipEl.style.cssText =
+    'position:fixed;z-index:10000;pointer-events:none;background:rgba(20,20,20,0.92);' +
+    'color:#fff;padding:4px 8px;border-radius:4px;font:13px Georgia,serif;' +
+    'max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' +
+    'box-shadow:0 2px 6px rgba(0,0,0,0.35);display:none;';
+  document.body.appendChild(tooltipEl);
+  let tooltipPoi = null;
+  let tooltipTimer = null;
+  const TOOLTIP_DELAY_MS = 450;
+  function hideTooltip() {
+    if (tooltipTimer) { clearTimeout(tooltipTimer); tooltipTimer = null; }
+    tooltipEl.style.display = 'none';
+    tooltipPoi = null;
+  }
+  function scheduleTooltip(poi, clientX, clientY) {
+    if (tooltipPoi && tooltipPoi.id === poi.id) {
+      tooltipEl.style.left = (clientX + 14) + 'px';
+      tooltipEl.style.top = (clientY + 14) + 'px';
+      return;
+    }
+    hideTooltip();
+    tooltipPoi = poi;
+    tooltipTimer = setTimeout(() => {
+      tooltipEl.textContent = poi.name || '(unnamed)';
+      tooltipEl.style.left = (clientX + 14) + 'px';
+      tooltipEl.style.top = (clientY + 14) + 'px';
+      tooltipEl.style.display = 'block';
+    }, TOOLTIP_DELAY_MS);
+  }
+  overlayCanvas.addEventListener('mouseleave', hideTooltip);
+  window.addEventListener('scroll', hideTooltip, true);
 
   window.addEventListener('mousemove', (e) => {
     if (!dragging) {
@@ -82,10 +118,13 @@ export function initInput({ overlayCanvas, getState, getIsHost, socket, onDragPo
       const st = getState();
       if (st) {
         const { px, py } = canvasPos(e);
-        if (findFlagAt(st, px, py)) {
+        const hoveredFlag = findFlagAt(st, px, py);
+        if (hoveredFlag) {
           overlayCanvas.style.cursor = 'pointer';
+          scheduleTooltip(hoveredFlag, e.clientX, e.clientY);
           return;
         }
+        hideTooltip();
       }
       // Update cursor for visible tiles (player only)
       if (!getIsHost()) {

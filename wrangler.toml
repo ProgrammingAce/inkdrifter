@@ -1,0 +1,17 @@
+name = "inkdrifter"
+main = "dist/worker.js"
+compatibility_date = "2024-12-01"
+workers_dev = false
+
+[durable_objects]
+bindings = [
+  { name = "LOBBY_DO", class_name = "LobbyDO" },
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["LobbyDO"]
+
+[[routes]]
+pattern = "drifter.ink/*"
+zone_name = "drifter.ink"

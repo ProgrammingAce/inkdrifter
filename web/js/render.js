@@ -167,18 +167,35 @@ export function renderOverlay(ctx, state, isHost, dragPos, biomeOn) {
   }
 
   // Draw biome overlay on revealed/ring hexes (or all hexes in preview/no-fog)
+  if (biomeOn) {
+    if (!window.__biomeDebugged) {
+      window.__biomeDebugged = true;
+      const sample = biomeTags ? Object.entries(biomeTags).slice(0, 3) : null;
+      console.log('[biome-debug] biomeOn=true, biomeTags type=', biomeTags?.constructor?.name,
+        'keys=', biomeTags ? Object.keys(biomeTags).length : 0, 'sample=', sample,
+        'isMap=', biomeTags instanceof Map, 'state.status=', state.status);
+    }
+  }
   if (biomeOn && biomeTags && Object.keys(biomeTags).length > 0) {
     const hasFog = hostFogEnabled || playerFogEnabled;
     const visibleHexes = (inPreview || !hasFog) ? null : new Set([...revealed, ...ringSet]);
+    let drawn = 0, skippedNoColor = 0, skippedFog = 0;
     for (const [key, tag] of Object.entries(biomeTags)) {
-      if (visibleHexes && !visibleHexes.has(key)) continue;
+      if (visibleHexes && !visibleHexes.has(key)) { skippedFog++; continue; }
       const [r, c] = key.split(',').map(Number);
       const { x, y } = hexCenter(r, c, originX, originY);
       const color = BIOME_COLORS[tag]?.overlay;
       if (color) {
         ctx.fillStyle = color;
         fillHex(ctx, x, y, hexSize);
+        drawn++;
+      } else {
+        skippedNoColor++;
       }
+    }
+    if (!window.__biomeDrawLogged) {
+      window.__biomeDrawLogged = true;
+      console.log('[biome-debug] drew', drawn, 'hexes, skippedFog=', skippedFog, 'skippedNoColor=', skippedNoColor);
     }
   }
 

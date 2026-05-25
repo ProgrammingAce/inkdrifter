@@ -13,7 +13,7 @@
     <div id="map-scroll" class="map-scroll">
       <div id="loading" class="loading-msg">
         <div class="spinner"></div>
-        <span>Generating map…</span>
+        <span>Generating map… (this may take a moment)</span>
       </div>
       <div id="map-stack">
         <canvas id="base-canvas"></canvas>
@@ -99,7 +99,7 @@
       <ul id="pending-list" class="request-list"></ul>
     </div>
 
- <!-- Preview controls (host only) -->
+  <!-- Preview controls (host only) -->
     <div id="host-controls-preview" class="sidebar-section" style="display:none;">
       <h3>Preview Mode</h3>
       <p style="font-size:0.85rem;color:var(--text-light);margin-bottom:12px;">
@@ -131,7 +131,6 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="/socket.io/socket.io.js"></script>
-<script type="module" src="/js/lobby.js?v=17"></script>
+<script type="module" src="/js/lobby.js"></script>
 </body>
 </html>

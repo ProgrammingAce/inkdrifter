@@ -38,3 +38,5 @@ out/
 
 # Scratch saves
 inkdrifter-game-state-*.json
+
+.wrangler/

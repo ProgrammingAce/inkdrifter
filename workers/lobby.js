@@ -1,22 +1,22 @@
-const crypto = require('crypto');
-const {
+import {
   HEX_SIZE,
   DEFAULT_GRID_ORIGIN_X,
   DEFAULT_GRID_ORIGIN_Y,
   MIN_GRID,
   MAX_GRID,
   gridCanvasSize,
-  hexNeighborsBounded: hexNeighbors,
-} = require('../index.js');
-const {
+} from './constants.js';
+import { hexNeighborsBounded } from './hex.js';
+
+import {
   MAX_PLAYERS_PER_LOBBY,
   POI_COLORS,
   POI_MAX_PER_LOBBY,
   POI_NAME_MAX,
   POI_DESC_MAX,
-} = require('./protocol.js');
+} from './protocol.js';
 
-class Lobby {
+export class Lobby {
   constructor({ code, seed, rows, cols, hostToken, hostName, islands = false, mapOptions = {} }) {
     this.code = code;
     this.seed = seed;
@@ -32,33 +32,29 @@ class Lobby {
     this.hexSize = HEX_SIZE;
 
     this.status = 'rendering';
-    this.pngBuffer = null;
     this.biomeTags = {};
 
     this.hostToken = hostToken;
     this.hostName = hostName;
     this.hostConnected = false;
-    this.hostSocketId = null;
 
-    this.players = {}; // playerId -> { name, token, connected, socketId }
-    this.marker = null; // { row, col } | null
-    this.revealed = new Set(); // Set of "r,c" strings
+    this.players = {};
+    this.marker = null;
+    this.revealed = new Set();
     this.fog = { host: true, players: true };
-    this.pendingRequests = {}; // requestId -> { playerId, row, col, at }
-    this.pois = []; // [{ id, row, col, name, description, color, visibility, createdBy }]
+    this.pendingRequests = {};
+    this.pois = [];
     this._poiMutCount = 0;
     this._poiMutWindowStart = Date.now();
+
+    this._pendingImport = null;
+    this._graceUntil = null;
 
     this.createdAt = Date.now();
     this.lastActivityAt = Date.now();
 
-    this._gracePauseTimer = null;
-
-    // Rate limiting state per player
-    this._moveReqLast = {}; // playerId -> timestamp
-    this._moveReqViolations = {}; // playerId -> { count, windowStart }
-
-    // Marker move rate limiting per host socket
+    this._moveReqLast = {};
+    this._moveReqViolations = {};
     this._markerMoveCount = 0;
     this._markerMoveWindowStart = Date.now();
   }
@@ -66,9 +62,9 @@ class Lobby {
   addPlayer(playerName) {
     if (Object.keys(this.players).length >= MAX_PLAYERS_PER_LOBBY - 1) return null;
     this.lastActivityAt = Date.now();
-    const playerId = 'p_' + crypto.randomBytes(3).toString('hex');
+    const playerId = 'p_' + crypto.getRandomValues(new Uint8Array(3)).reduce((s, b) => s + b.toString(16).padStart(2, '0'), '');
     const playerToken = crypto.randomUUID();
-    this.players[playerId] = { name: playerName, token: playerToken, connected: false, socketId: null };
+    this.players[playerId] = { name: playerName, token: playerToken, connected: false };
     return { playerId, playerToken };
   }
 
@@ -83,8 +79,7 @@ class Lobby {
     return null;
   }
 
-  setReady(pngBuffer, biomeTags) {
-    this.pngBuffer = pngBuffer;
+  setReady({ biomeTags }) {
     this.biomeTags = biomeTags || {};
     this.status = 'preview';
   }
@@ -98,16 +93,12 @@ class Lobby {
 
   regenerate() {
     this.status = 'rendering';
-    this.pngBuffer = null;
     this.biomeTags = {};
-    // Generate a new seed for the regenerated map
-    this.seed = crypto.randomInt(0, 2 ** 32);
-    // Clear all game state from preview
+    this.seed = crypto.getRandomValues(new Uint32Array(1))[0];
     this.revealed = new Set();
     this.marker = null;
     this.pendingRequests = {};
     this.pois = [];
-    // Reset per-player rate-limit counters (new game = fresh slate)
     this._moveReqLast = {};
     this._moveReqViolations = {};
     this._markerMoveCount = 0;
@@ -156,13 +147,12 @@ class Lobby {
     const target = `${row},${col}`;
     if (!this.revealed.has(target)) {
       let adjToRevealed = false;
-      for (const [nr, nc] of hexNeighbors(row, col, this.rows, this.cols)) {
+      for (const [nr, nc] of hexNeighborsBounded(row, col, this.rows, this.cols)) {
         if (this.revealed.has(`${nr},${nc}`)) { adjToRevealed = true; break; }
       }
       if (!adjToRevealed) return { error: 'not_in_ring' };
     }
 
-    // Cancel any existing request from this player
     let cancelledRequestId = null;
     for (const [requestId, req] of Object.entries(this.pendingRequests)) {
       if (req.playerId === playerId) {
@@ -172,7 +162,7 @@ class Lobby {
       }
     }
 
-    const newRequestId = 'req_' + crypto.randomBytes(4).toString('hex');
+    const newRequestId = 'req_' + crypto.getRandomValues(new Uint8Array(4)).reduce((s, b) => s + b.toString(16).padStart(2, '0'), '');
     this.pendingRequests[newRequestId] = { playerId, row, col, at: now };
     this.lastActivityAt = now;
     return { requestId: newRequestId, cancelledRequestId, at: now };
@@ -246,17 +236,17 @@ class Lobby {
       out.color = input.color;
     }
 
-if (input.visibility != null || !partial) {
-       const v = input.visibility ?? 'public';
-       if (v !== 'public' && v !== 'gm') return { error: 'poi_invalid' };
-       out.visibility = v;
-     }
+    if (input.visibility != null || !partial) {
+      const v = input.visibility ?? 'public';
+      if (v !== 'public' && v !== 'gm') return { error: 'poi_invalid' };
+      out.visibility = v;
+    }
 
-     if (input.editableByPlayers != null || !partial) {
-       out.editableByPlayers = !!input.editableByPlayers;
-     }
+    if (input.editableByPlayers != null || !partial) {
+      out.editableByPlayers = !!input.editableByPlayers;
+    }
 
-     return { data: out };
+    return { data: out };
   }
 
   createPoi(input, byRole, byPlayerId) {
@@ -273,7 +263,7 @@ if (input.visibility != null || !partial) {
       delete s.data.editableByPlayers;
     }
     const poi = {
-      id: 'poi_' + crypto.randomBytes(4).toString('hex'),
+      id: 'poi_' + crypto.getRandomValues(new Uint8Array(4)).reduce((s, b) => s + b.toString(16).padStart(2, '0'), ''),
       ...s.data,
       createdBy: byRole === 'host' ? 'host' : byPlayerId,
     };
@@ -324,7 +314,7 @@ if (input.visibility != null || !partial) {
     const key = `${row},${col}`;
     if (this.revealed.has(key)) return true;
     if (!this.marker) return false;
-    for (const [nr, nc] of hexNeighbors(row, col, this.rows, this.cols)) {
+    for (const [nr, nc] of hexNeighborsBounded(row, col, this.rows, this.cols)) {
       if (this.revealed.has(`${nr},${nc}`)) return true;
     }
     return false;
@@ -349,7 +339,10 @@ if (input.visibility != null || !partial) {
 
     const revealed = new Set();
     if (Array.isArray(revealedTiles)) {
-      for (const tile of revealedTiles) {
+      const max = this.rows * this.cols;
+      const limit = Math.min(revealedTiles.length, max);
+      for (let i = 0; i < limit; i++) {
+        const tile = revealedTiles[i];
         if (!Array.isArray(tile) || tile.length !== 2) continue;
         const [r, c] = tile;
         if (inBounds(r, c)) revealed.add(`${r},${c}`);
@@ -363,7 +356,9 @@ if (input.visibility != null || !partial) {
 
     if (Array.isArray(pois)) {
       const loaded = [];
-      for (const p of pois) {
+      const cap = Math.min(pois.length, POI_MAX_PER_LOBBY);
+      for (let i = 0; i < cap; i++) {
+        const p = pois[i];
         if (loaded.length >= POI_MAX_PER_LOBBY) break;
         if (!p || typeof p !== 'object') continue;
         if (!inBounds(p.row, p.col)) continue;
@@ -378,7 +373,7 @@ if (input.visibility != null || !partial) {
         const visibility = p.visibility === 'gm' ? 'gm' : 'public';
         const id = (typeof p.id === 'string' && /^poi_[a-f0-9]{4,16}$/.test(p.id))
           ? p.id
-          : 'poi_' + crypto.randomBytes(4).toString('hex');
+          : 'poi_' + crypto.getRandomValues(new Uint8Array(4)).reduce((s, b) => s + b.toString(16).padStart(2, '0'), '');
         loaded.push({
           id,
           row: p.row,
@@ -438,7 +433,7 @@ if (input.visibility != null || !partial) {
   }
 
   get playerCount() {
-    return Object.keys(this.players).length + 1; // +1 for host
+    return Object.keys(this.players).length + 1;
   }
 
   toWire(role, playerId) {
@@ -458,8 +453,8 @@ if (input.visibility != null || !partial) {
       players: this._playersWire(),
       marker: this.marker,
       revealed: this._revealedTiles(),
-     fog: this.fog,
-       pendingRequests: this._pendingRequestsWire({ sort: true }),
+      fog: this.fog,
+      pendingRequests: this._pendingRequestsWire({ sort: true }),
       biomeTags: this.biomeTags,
       mapOptions: this.mapOptions,
       pois: this.getVisiblePois(role),
@@ -467,6 +462,71 @@ if (input.visibility != null || !partial) {
     if (role === 'host') return { ...base, role: 'host' };
     return { ...base, role: 'player', playerId };
   }
+
+  toStorage() {
+    return {
+      code: this.code,
+      seed: this.seed,
+      rows: this.rows,
+      cols: this.cols,
+      islands: this.islands,
+      mapOptions: this.mapOptions,
+      canvasWidth: this.canvasWidth,
+      canvasHeight: this.canvasHeight,
+      originX: this.originX,
+      originY: this.originY,
+      hexSize: this.hexSize,
+      status: this.status,
+      biomeTags: this.biomeTags,
+      hostToken: this.hostToken,
+      hostName: this.hostName,
+      hostConnected: this.hostConnected,
+      players: this.players,
+      marker: this.marker,
+      revealed: Array.from(this.revealed),
+      fog: this.fog,
+      pendingRequests: this.pendingRequests,
+      pois: this.pois,
+      createdAt: this.createdAt,
+      lastActivityAt: this.lastActivityAt,
+      // Rate-limit counters intentionally omitted: best-effort, in-memory only.
+      _pendingImport: this._pendingImport,
+      _graceUntil: this._graceUntil,
+    };
+  }
+
+  static fromStorage(data) {
+    const lobby = new Lobby({
+      code: data.code,
+      seed: data.seed,
+      rows: data.rows,
+      cols: data.cols,
+      hostToken: data.hostToken,
+      hostName: data.hostName,
+      islands: data.islands,
+      mapOptions: data.mapOptions,
+    });
+    lobby.canvasWidth = data.canvasWidth;
+    lobby.canvasHeight = data.canvasHeight;
+    lobby.originX = data.originX;
+    lobby.originY = data.originY;
+    lobby.hexSize = data.hexSize;
+    lobby.status = data.status;
+    lobby.biomeTags = data.biomeTags || {};
+    lobby.players = data.players || {};
+    lobby.marker = data.marker;
+    lobby.revealed = new Set(data.revealed || []);
+    lobby.fog = data.fog || { host: true, players: true };
+    lobby.pendingRequests = data.pendingRequests || {};
+    lobby.pois = data.pois || [];
+    lobby.createdAt = data.createdAt;
+    lobby.lastActivityAt = data.lastActivityAt;
+    lobby._moveReqLast = {};
+    lobby._moveReqViolations = {};
+    lobby._pendingImport = data._pendingImport || null;
+    lobby._graceUntil = data._graceUntil || null;
+    return lobby;
+  }
 }
 
-module.exports = { Lobby, hexNeighbors, MIN_GRID, MAX_GRID, MAX_PLAYERS_PER_LOBBY };
+export { hexNeighborsBounded as hexNeighbors, MIN_GRID, MAX_GRID };
