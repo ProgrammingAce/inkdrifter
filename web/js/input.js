@@ -12,6 +12,7 @@ export function initInput({ overlayCanvas, getState, getIsHost, socket, onDragPo
   if (_bound) return;
   _bound = true;
   let dragging = false;
+  let dragCompleted = false;
 
   // Hit test a click against rendered POI flag positions. Mirrors the layout
   // used by render.js drawFlag/poiAnchorOffset.
@@ -112,6 +113,7 @@ export function initInput({ overlayCanvas, getState, getIsHost, socket, onDragPo
   window.addEventListener('mouseup', (e) => {
     if (!dragging) return;
     dragging = false;
+    dragCompleted = true;
     const state = getState();
     if (state) {
       const { px, py } = canvasPos(e);
@@ -122,6 +124,9 @@ export function initInput({ overlayCanvas, getState, getIsHost, socket, onDragPo
   });
 
   overlayCanvas.addEventListener('click', (e) => {
+    const wasDrag = dragCompleted;
+    dragCompleted = false;
+    if (wasDrag) return;
     // Click on an existing flag → open its editor.
     const stateFlag = getState();
     if (stateFlag) {
